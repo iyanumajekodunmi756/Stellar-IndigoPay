@@ -1,4 +1,4 @@
-# Architecture — Stellar IndigoPay
+# Architecture — Stellar-IndigoPay
 
 ## System Overview
 

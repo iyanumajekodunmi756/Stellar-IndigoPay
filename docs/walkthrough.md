@@ -1,4 +1,4 @@
-# 🎬 First Donation Walkthrough
+# 🎬 First Donation Walkthrough — Stellar-IndigoPay
 
 A step-by-step guide to making your first climate donation on Stellar Testnet in under 10 minutes.
 

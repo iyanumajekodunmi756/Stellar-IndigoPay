@@ -1,4 +1,4 @@
-# API Reference — Stellar IndigoPay
+# API Reference — Stellar-IndigoPay
 
 Base URL: `http://localhost:4000`
 

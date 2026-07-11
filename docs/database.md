@@ -2,7 +2,7 @@
 
 ## Overview
 
-IndigoPay uses PostgreSQL 16 as its primary database for managing user accounts, transactions, and smart contract interactions.
+Stellar-IndigoPay uses PostgreSQL 16 as its primary database for managing user accounts, transactions, and smart contract interactions.
 
 ## Database Setup
 
@@ -42,7 +42,7 @@ For production deployments:
 
 ### Automated Backups
 
-IndigoPay implements automated nightly database backups to cloud storage for disaster recovery.
+Stellar-IndigoPay implements automated nightly database backups to cloud storage for disaster recovery.
 
 #### Backup Flow
 

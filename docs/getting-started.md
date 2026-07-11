@@ -37,8 +37,8 @@ Freighter is a browser extension wallet for the Stellar network.
 - 📥 Clone the Repository
 
 ```
-git clone <your-repo-url>
-cd <your-project-folder>
+git clone https://github.com/Stellar-IndigoPay/Stellar-IndigoPay
+cd Stellar-IndigoPay
 ```
 
 - ⚙️ Run Setup Script

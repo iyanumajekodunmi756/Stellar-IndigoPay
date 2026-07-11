@@ -25,7 +25,7 @@ is violated.
 k6 run scripts/load-test.js
 
 # Against a staging environment
-BASE_URL=https://staging.indigopay.app k6 run scripts/load-test.js
+BASE_URL=https://staging.stellarindigopay.com k6 run scripts/load-test.js
 
 # Ramp-up scenario (0 → 100 VUs over 30 s, hold 60 s, ramp down)
 SCENARIO=ramp-up k6 run scripts/load-test.js
@@ -39,7 +39,7 @@ k6 run --out json=results.json scripts/load-test.js
 ```bash
 cd backend
 npm run load-test                                     # sustained (default)
-BASE_URL=https://staging.indigopay.app npm run load-test
+BASE_URL=https://staging.stellarindigopay.com npm run load-test
 SCENARIO=ramp-up npm run load-test
 ```
 
