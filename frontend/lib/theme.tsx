@@ -32,7 +32,7 @@ import {
 export type ThemeMode = "light" | "dark" | "system";
 export type EffectiveTheme = "light" | "dark";
 
-export const THEME_STORAGE_KEY = "indigopay-theme";
+export const THEME_STORAGE_KEY = "stellar-indigopay-theme";
 
 interface ThemeContextValue {
   /** What the user has explicitly chosen (including "follow my OS"). */
