@@ -57,6 +57,7 @@ export default function AdminIndex({ publicKey, onConnect }: AdminIndexProps) {
     if (!publicKey) return;
     loadProjects();
     loadQueues();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicKey]);
 
   const handlePauseQueue = async (name: string) => {
