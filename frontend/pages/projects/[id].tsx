@@ -1866,3 +1866,4 @@ function formatCountdown(deadline: string, nowMs: number) {
   if (days > 0) return `${days}d ${hours}h ${minutes}m`;
   return `${hours}h ${minutes}m ${seconds}s`;
 }
+console.log(1)
