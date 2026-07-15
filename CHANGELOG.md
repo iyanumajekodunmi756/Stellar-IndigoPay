@@ -1,3 +1,17 @@
+## [Unreleased]
+
+### Features
+
+* **backend:** implement Soroban RPC retry with exponential backoff and circuit breaker (GF-043, closes #100)
+  - Add `backend/src/services/circuitBreaker.js` — reusable `CircuitBreaker` class (CLOSED / HALF_OPEN / OPEN state machine, configurable `failureThreshold` and `resetTimeout`)
+  - Export `indigopay_soroban_circuit_breaker_state` Prometheus Gauge (0=closed, 1=half_open, 2=open)
+  - Update `backend/src/services/stellar.js` with `withRetry()` (exponential backoff: 100ms → 200ms → 400ms, max 3 retries env-configurable via `SOROBAN_RPC_MAX_RETRIES`) and `rpcBreaker` circuit breaker wrapping all Soroban RPC calls
+  - Export `indigopay_soroban_rpc_retries_total` Prometheus Counter
+  - Update `backend/src/routes/readiness.js` to include `soroban_rpc` health check in `/api/readyz` response (reports `ok` or `degraded`)
+  - Add 33-test suite `backend/src/services/circuitBreaker.test.js` covering state machine, `isRetryable` classification, retry logic, circuit breaker open/half-open/closed transitions, and Prometheus metrics
+
+---
+
 # 1.0.0 (2026-07-12)
 
 

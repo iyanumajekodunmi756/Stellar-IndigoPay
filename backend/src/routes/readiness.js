@@ -21,6 +21,7 @@ const logger = require("../logger");
 const pool = require("../db/pool");
 const { isShuttingDown } = require("../services/lifecycle");
 const metrics = require("../services/metrics");
+const { withRetry, rpcServer } = require("../services/stellar");
 
 const HORIZON_URL =
   process.env.NEXT_PUBLIC_HORIZON_URL ||
@@ -80,6 +81,7 @@ router.get("/", async (_req, res) => {
     db: { status: "unknown" },
     redis: { status: "skipped" },
     horizon: { status: "unknown" },
+    soroban_rpc: { status: "unknown" },
     indexer: { status: "unknown" },
   };
 
@@ -116,6 +118,19 @@ router.get("/", async (_req, res) => {
     horizon.ok && horizon.value.ok
       ? { status: "ok" }
       : { status: "unreachable", reason: horizon.reason || "non-2xx" };
+
+  // Soroban RPC (best-effort — max 1 retry so the probe stays fast)
+  // Uses withRetry with maxRetries=1 rather than 0 to account for one
+  // transient hiccup, but we don't run the full 3-retry backoff here since
+  // we want the readiness response to be snappy.
+  const sorobanResult = await withTimeout(
+    withRetry(() => rpcServer.getLatestLedger(), 1),
+    CHECK_TIMEOUT_MS,
+    "soroban_rpc",
+  );
+  checks.soroban_rpc = sorobanResult.ok
+    ? { status: "ok" }
+    : { status: "degraded", reason: sorobanResult.reason || "RPC unreachable" };
 
   // Indexer (process-local — does not block on the network)
   try {
