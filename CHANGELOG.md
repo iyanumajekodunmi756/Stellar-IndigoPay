@@ -2,6 +2,52 @@
 
 ### Features
 
+* **contracts:** Add `attestation-contract` — the on-chain half of the
+  [Cross-Chain Donation Attestation Bridge (#125)]:
+  - `contracts/attestation-contract/src/lib.rs` — new Soroban contract
+    with `record_attestation`, `verify_attestation`, `revoke_attestation`,
+    plus `get_attestation` / `get_attestation_by_source` /
+    `get_by_donor` / `get_pending_count` / `get_total_count`.
+  - Lifecycle (`set_relayer` / `clear_relayer`), chain allow-list
+    (`add_allowed_chain` / `remove_allowed_chain`), contract pause
+    (`pause` / `unpause`), and the same 48h upgrade timelock pattern as
+    the parent `indigopay-contract`.
+  - Replay protection: `DataKey::SourceTxSeen(chain, hash)` blocks any
+    second `record_attestation` of the same source tx on-chain,
+    complemented by `UNIQUE (source_chain, source_tx_hash)` off-chain.
+  - 17-test Rust suite covering initialisation, replay, status
+    transitions, allow-list enforcement, pause, non-relayer rejection,
+    zero-amount rejection, and lookup-by-source resolution.
+* **backend:** Attestation HTTP API mounted at `/api/attestations` and
+  `/api/v1/attestations` (issue #125):
+  - `backend/src/routes/attestations.js` — reads, write side, proof
+    minting (`POST /build-proof`), per-id verify, admin revoke.
+  - `backend/src/services/attestation.js` — HMAC-SHA256 partner proof
+    helpers, replay-safe idempotent upsert (race-tolerant via 23505
+    fallback), validators (`source_chain`, `tx_hash`, `Stellar
+    address`), and admin revoke logging.
+  - `backend/src/db/migrations/005_attestations.js` — `attestations`
+    table + `attestations_public` view, indices for donor / project /
+    status, with replay-safe UNIQUE constraint.
+  - 19-Jest backend test suite covering hash determinism,
+    round-trip sign / verify, validators, replay, race resolution,
+    insert, verify, revoke, and every endpoint.
+* **frontend:** Cross-Chain Attestation UI surfaces (issue #125):
+  - `frontend/pages/verify.tsx` — read-only public verification page
+    that resolves `(source_chain, source_tx_hash)` *or* on-chain id to
+    a full attestation card, plus platform-wide trust stats.
+  - `frontend/pages/bridge.tsx` — extended with a source-tx-hash field
+    and a "Mint Cross-Chain Attestation" button that calls
+    `/api/attestations/build-proof` and records the proof in local
+    bridge history.
+  - `frontend/lib/api.ts` — typed helpers for the new endpoints
+    (`fetchAttestationBySource`, `fetchAttestationsByDonor`,
+    `fetchAttestationStats`, `CrossChainAttestation`).
+  - Existing `recordDonation({ transactionHash: 'bridge-…' })` flow is
+    preserved (the new attestation path is additive).
+* **docs:** Update `CHANGELOG.md`, `ROADMAP.md` (first v2.2 item
+  shipped), and `docs/api/openapi.yaml` with the new routes.
+
 * **backend:** implement Soroban RPC retry with exponential backoff and circuit breaker (GF-043, closes #100)
   - Add `backend/src/services/circuitBreaker.js` — reusable `CircuitBreaker` class (CLOSED / HALF_OPEN / OPEN state machine, configurable `failureThreshold` and `resetTimeout`)
   - Export `indigopay_soroban_circuit_breaker_state` Prometheus Gauge (0=closed, 1=half_open, 2=open)

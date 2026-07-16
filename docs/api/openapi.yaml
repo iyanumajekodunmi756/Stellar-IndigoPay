@@ -24,6 +24,7 @@ tags:
   - name: Jobs
   - name: Stats
   - name: Admin
+  - name: Attestations
 security:
   - BearerAuth: []
 components:
@@ -695,6 +696,140 @@ components:
         reason:
           type: string
         adminAddress:
+          type: string
+    Attestation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        onChainId:
+          type: integer
+          nullable: true
+        sourceChain:
+          type: string
+          description: Source chain slug (e.g. "ethereum", "polygon", "arbitrum", "base").
+          example: ethereum
+        sourceTxHash:
+          type: string
+          description: Transaction hash on the source chain.
+          example: "0xabc123…"
+        donorAddress:
+          type: string
+          pattern: "^G[A-Z0-9]{55}$"
+        projectId:
+          type: string
+          format: uuid
+          nullable: true
+        amountUsd:
+          type: string
+          description: USD-equivalent value, 6 decimals (USDC convention).
+          example: "10.000000"
+        amountXlm:
+          type: string
+          description: XLM-equivalent value, 7 decimals (stroops stored as decimal).
+          example: "80.0000000"
+        status:
+          type: string
+          enum: [pending, verified, revoked]
+        messageHash:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        verifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+    AttestationStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        pending:
+          type: integer
+        verified:
+          type: integer
+        revoked:
+          type: integer
+        byChain:
+          type: array
+          items:
+            type: object
+            properties:
+              sourceChain:
+                type: string
+              count:
+                type: integer
+    BuildAttestationProofRequest:
+      type: object
+      required: [source_chain, source_tx_hash, donor_address, project_id]
+      properties:
+        source_chain:
+          type: string
+        source_tx_hash:
+          type: string
+        donor_address:
+          type: string
+          pattern: "^G[A-Z0-9]{55}$"
+        project_id:
+          type: string
+    BuildAttestationProofResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            payload:
+              type: string
+              description: Hex-encoded SHA-256 of the canonical input.
+            signature:
+              type: string
+              description: GitHub-style t=…,v1=… HMAC-SHA256 signature.
+            timestamp:
+              type: integer
+            canonical:
+              type: object
+    RecordAttestationRequest:
+      type: object
+      required:
+        - source_chain
+        - source_tx_hash
+        - donor_address
+        - project_id
+        - amount_usd
+        - amount_xlm
+        - on_chain_id
+      properties:
+        source_chain:
+          type: string
+        source_tx_hash:
+          type: string
+        donor_address:
+          type: string
+          pattern: "^G[A-Z0-9]{55}$"
+        project_id:
+          type: string
+          format: uuid
+        amount_usd:
+          type: number
+          description: USD-equivalent value, 6 decimals.
+        amount_xlm:
+          type: number
+          description: XLM-equivalent value, 7 decimals.
+        message_hash:
+          type: integer
+        on_chain_id:
+          type: integer
+          description: Soroban-assigned monotonic id returned by the relayer.
+        status:
+          type: string
+          enum: [pending, verified, revoked]
+          default: pending
+        recorded_by:
           type: string
     AdminRegisterProjectRequest:
       type: object
@@ -1850,3 +1985,264 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/attestations:
+    get:
+      tags: [Attestations]
+      summary: Get attestation roll-up stats
+      description: Returns platform-wide counts (total / pending / verified / revoked) plus per-source-chain breakdown (issue #125).
+      security: []
+      responses:
+        "200":
+          description: Roll-up stats.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/AttestationStats"
+    post:
+      tags: [Attestations]
+      summary: Record a new cross-chain attestation
+      description: Called by the relayer after source-chain finality. Requires a signed proof in either the `x-attestation-signature` / `x-attestation-timestamp` headers or the legacy `x_proof_signature` / `x_proof_timestamp` aliases.
+      security: []
+      parameters:
+        - name: x-attestation-signature
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: x-attestation-timestamp
+          in: header
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordAttestationRequest"
+      responses:
+        "201":
+          description: Attestation created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  created:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/Attestation"
+        "200":
+          description: Attestation already existed; idempotent response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  created:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/Attestation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/attestations/build-proof:
+    post:
+      tags: [Attestations]
+      summary: Mint a signed proof for a cross-chain observation
+      description: Returns `{payload, signature, timestamp, canonical}` so a partner can submit `/api/attestations` with a verifiable header pair.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuildAttestationProofRequest"
+      responses:
+        "200":
+          description: A signed proof.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuildAttestationProofResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/attestations/by-source:
+    get:
+      tags: [Attestations]
+      summary: Look up an attestation by source-chain keys
+      security: []
+      parameters:
+        - name: source_chain
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: source_tx_hash
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The matching attestation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/Attestation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/attestations/by-donor/{publicKey}:
+    get:
+      tags: [Attestations]
+      summary: List every attestation for a Stellar donor
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/PublicKeyParam"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Attestation history for the donor.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Attestation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/attestations/by-id/{onChainId}:
+    get:
+      tags: [Attestations]
+      summary: Look up an attestation by its Soroban on-chain id
+      security: []
+      parameters:
+        - name: onChainId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: The matching attestation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/Attestation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/attestations/{id}:
+    get:
+      tags: [Attestations]
+      summary: Get an attestation by backend UUID
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The matching attestation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/Attestation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/attestations/{id}/verify:
+    post:
+      tags: [Attestations]
+      summary: Flip a pending attestation to verified
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Attestation updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/Attestation"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/attestations/{id}/revoke:
+    post:
+      tags: [Attestations]
+      summary: Revoke an attestation (admin / incident response)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Attestation revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: "#/components/schemas/Attestation"
+        "404":
+          $ref: "#/components/responses/NotFound"

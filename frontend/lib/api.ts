@@ -985,3 +985,93 @@ export async function purgeQueue(name: string, adminKey: string): Promise<boolea
   );
   return data.success;
 }
+
+// ── Cross-Chain Donation Attestation Bridge (#125) ────────────────────────
+
+/**
+ * Public shape of an attestation returned by /api/attestations.
+ * Mirrors the backend `publicShape()` helper so the frontend reads stay
+ * simple — pascalCase keys, ISO timestamps, and numeric ids rather than
+ * the snake_case DB rows.
+ */
+export interface CrossChainAttestation {
+  id: string;
+  onChainId: number | null;
+  sourceChain: string;
+  sourceTxHash: string;
+  donorAddress: string;
+  projectId: string | null;
+  amountUsd: string | null;
+  amountXlm: string | null;
+  status: "pending" | "verified" | "revoked";
+  messageHash: number | null;
+  createdAt: string;
+  verifiedAt: string | null;
+}
+
+/**
+ * Map {source_chain, source_tx_hash} → on-chain attestation. Useful for
+ * the /verify page when a donor wants to confirm the backend did see
+ * their Ethereum transfer but hasn't yet been written to Soroban.
+ */
+export async function fetchAttestationBySource(
+  sourceChain: string,
+  sourceTxHash: string,
+): Promise<CrossChainAttestation | null> {
+  try {
+    const { data } = await api.get<{
+      success: boolean;
+      data: CrossChainAttestation;
+    }>("/api/attestations/by-source", {
+      params: { source_chain: sourceChain, source_tx_hash: sourceTxHash },
+    });
+    return data?.data ?? null;
+  } catch (err) {
+    if (
+      axios.isAxiosError(err) &&
+      err.response &&
+      err.response.status === 404
+    ) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * List every attestation a given Stellar wallet has produced via the
+ * cross-chain bridge. Returns the newest first.
+ */
+export async function fetchAttestationsByDonor(
+  donorAddress: string,
+  limit = 50,
+): Promise<CrossChainAttestation[]> {
+  const { data } = await api.get<{
+    success: boolean;
+    data: CrossChainAttestation[];
+  }>(`/api/attestations/by-donor/${donorAddress}`, { params: { limit } });
+  return data.data;
+}
+
+/**
+ * Platform-wide roll-up for the landing page trust signal.
+ */
+export async function fetchAttestationStats(): Promise<{
+  total: number;
+  pending: number;
+  verified: number;
+  revoked: number;
+  byChain: Array<{ sourceChain: string; count: number }>;
+}> {
+  const { data } = await api.get<{
+    success: boolean;
+    data: {
+      total: number;
+      pending: number;
+      verified: number;
+      revoked: number;
+      byChain: Array<{ sourceChain: string; count: number }>;
+    };
+  }>("/api/attestations");
+  return data.data;
+}
