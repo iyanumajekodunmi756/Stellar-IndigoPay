@@ -23,6 +23,7 @@
 const { server: stellarServer } = require("./stellar");
 const pool = require("../db/pool");
 const { handleDonation, setUsdcToXlmRate } = require("./indexerDonationHandler");
+const { enqueue: enqueueDLQ } = require("./indexerDLQWorker");
 const logger = require("../logger");
 const { Counter } = require("prom-client");
 const { registry } = require("./metrics");
@@ -213,6 +214,7 @@ async function openStream() {
           }
         } catch (err) {
           logger.error({ event: "indexer_op_error", err: err.message }, "Operation processing error");
+          enqueueDLQ(op.ledger_attr, op.transaction_hash, err.message).catch(() => {});
         }
       },
       onerror: (err) => {
