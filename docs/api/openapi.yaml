@@ -1796,3 +1796,57 @@ paths:
                 $ref: "#/components/schemas/AdminAuditLogResponse"
         "401":
           $ref: "#/components/responses/Unauthorized"
+  /api/admin/documents/{cid}/verify:
+    get:
+      tags: [Admin]
+      summary: Verify an IPFS document
+      description: Re-fetches a pinned verification document from the configured IPFS gateway and returns its SHA-256 fingerprint.
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          description: IPFS content identifier.
+          schema:
+            type: string
+        - name: name
+          in: query
+          required: false
+          description: Optional file name to append to gateway URLs for directory-style CIDs.
+          schema:
+            type: string
+        - name: sha256
+          in: query
+          required: false
+          description: Optional expected SHA-256 hash to compare with the fetched document bytes.
+          schema:
+            type: string
+            pattern: "^[a-fA-F0-9]{64}$"
+      responses:
+        "200":
+          description: IPFS document verification result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      valid:
+                        type: boolean
+                      cid:
+                        type: string
+                      hash:
+                        type: string
+                      size:
+                        type: integer
+                      matches:
+                        type: boolean
+                      error:
+                        type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"

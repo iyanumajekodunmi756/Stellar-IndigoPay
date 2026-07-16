@@ -203,6 +203,10 @@ for (const name of routeMounts) {
     const router = require(`./routes/${name}`);
     app.use(`/api/${name}`, router);
     app.use(`/api/v1/${name}`, router);
+    if (name === "verification") {
+      app.use("/api/verification-requests", router);
+      app.use("/api/v1/verification-requests", router);
+    }
   } catch (err) {
     logger.error(
       { event: "route_load_failed", route: name, err: err.message },

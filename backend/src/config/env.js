@@ -54,6 +54,15 @@ const envSchema = z.object({
   S3_PUBLIC_URL: z.string().optional().default(""),
   IPFS_API_URL: z.string().optional().default(""),
   IPFS_GATEWAY_URL: z.string().optional().default(""),
+  // web3.storage token for pinning verification documents to IPFS. When
+  // set (or IPFS_API_URL is), /apply supporting documents are mirrored to
+  // IPFS and their CID stored in supporting_documents.
+  WEB3_STORAGE_API_KEY: z.string().optional().default(""),
+  IPFS_FALLBACK_TO_LOCAL: z
+    .enum(["true", "false"])
+    .optional()
+    .default("true"),
+  IPFS_TIMEOUT_MS: z.string().optional().default("30000"),
 
   // ── Observability / metrics ────────────────────────────────────────────────
   // When METRICS_ENABLED=false the /metrics endpoint returns 404. Defaults
