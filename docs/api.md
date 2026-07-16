@@ -167,6 +167,36 @@ Donations are **deduplicated by transactionHash** — safe to retry.
 
 ---
 
+## Project Analytics 🔒
+
+| Method | Endpoint                              | Description                                |
+| ------ | ------------------------------------- | ------------------------------------------ |
+| GET    | `/api/v1/projects/:id/analytics`      | Get project analytics (owner only)         |
+
+### GET /api/v1/projects/:id/analytics
+
+Returns aggregated donor demographics, donation trends, milestone progress,
+campaign performance, and rating summary. Access restricted to the project's
+wallet owner via the `wallet` query parameter.
+
+**Query parameters**
+
+| Parameter | Type   | Required | Description                         |
+| --------- | ------ | -------- | ----------------------------------- |
+| `wallet`  | string | Yes      | Stellar public key of project owner |
+
+**Rate limit:** 5 requests per minute per IP.
+
+**Error responses**
+
+| Status | Meaning                                |
+| ------ | -------------------------------------- |
+| 403    | `wallet` does not match project owner  |
+| 404    | Project not found                      |
+| 429    | Rate limit exceeded                    |
+
+---
+
 ## Badge Tiers
 
 | Tier       | Threshold   | Emoji |

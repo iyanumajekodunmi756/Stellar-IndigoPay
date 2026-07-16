@@ -404,6 +404,17 @@ export default function Home({ publicKey, onConnect }: HomeProps) {
               Contribute on GitHub →
             </a>
           </p>
+          <p className="text-[#64748B] dark:text-[#94A3B8] text-sm font-body mt-2">
+            💬{" "}
+            <a
+              href="https://t.me/StellarIndigoPay"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#4F46E5] dark:text-[#818CF8] hover:underline font-medium transition-colors"
+            >
+              Join our Telegram community →
+            </a>
+          </p>
         </div>
       </div>
 

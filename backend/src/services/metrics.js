@@ -165,6 +165,48 @@ const aiSummaryOutcomesTotal = new client.Counter({
   registers: [registry],
 });
 
+const queueDepth = new client.Gauge({
+  name: "queue_depth",
+  help: "Total number of jobs waiting or active in the queue.",
+  labelNames: ["queue"],
+  registers: [registry],
+});
+
+const queueActive = new client.Gauge({
+  name: "queue_active",
+  help: "Number of active jobs currently running in the queue.",
+  labelNames: ["queue"],
+  registers: [registry],
+});
+
+const queueWaiting = new client.Gauge({
+  name: "queue_waiting",
+  help: "Number of waiting jobs in the queue.",
+  labelNames: ["queue"],
+  registers: [registry],
+});
+
+const queueFailed = new client.Gauge({
+  name: "queue_failed",
+  help: "Number of failed jobs in the queue.",
+  labelNames: ["queue"],
+  registers: [registry],
+});
+
+const queueCompleted = new client.Gauge({
+  name: "queue_completed",
+  help: "Number of completed jobs in the queue.",
+  labelNames: ["queue"],
+  registers: [registry],
+});
+
+const queueLatency = new client.Gauge({
+  name: "queue_latency",
+  help: "Average processing latency of completed jobs in seconds.",
+  labelNames: ["queue"],
+  registers: [registry],
+});
+
 /**
  * Normalise an Express req.route.path / req.path to a low-cardinality
  * route label. We fall back to the literal path when no route is
@@ -200,10 +242,29 @@ function refreshDbPoolMetrics(pool) {
   }
 }
 
+const { getQueueMetrics } = require("./queueMetrics");
+
+async function refreshQueueMetrics() {
+  try {
+    const metricsList = await getQueueMetrics();
+    for (const q of metricsList) {
+      queueDepth.set({ queue: q.queue }, q.depth);
+      queueActive.set({ queue: q.queue }, q.active);
+      queueWaiting.set({ queue: q.queue }, q.waiting);
+      queueFailed.set({ queue: q.queue }, q.failed);
+      queueCompleted.set({ queue: q.queue }, q.completed);
+      queueLatency.set({ queue: q.queue }, q.latency);
+    }
+  } catch (err) {
+    // Suppress error so scrape doesn't fail on transient issues
+  }
+}
+
 module.exports = {
   registry,
   normaliseRoute,
   refreshDbPoolMetrics,
+  refreshQueueMetrics,
   metrics: {
     httpRequestsTotal,
     httpRequestDurationSeconds,
@@ -224,5 +285,11 @@ module.exports = {
     aiSummaryCostUsdTotal,
     aiSummaryLatencySeconds,
     aiSummaryOutcomesTotal,
+    queueDepth,
+    queueActive,
+    queueWaiting,
+    queueFailed,
+    queueCompleted,
+    queueLatency,
   },
 };

@@ -144,3 +144,9 @@ cd frontend
 npm install
 npm run dev
 ```
+
+---
+
+## Need Help?
+
+💬 **Join our [Telegram community](https://t.me/StellarIndigoPay)** — ask questions, share your experience, or just say hi.

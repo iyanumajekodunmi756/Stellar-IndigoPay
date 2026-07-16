@@ -21,8 +21,9 @@
 [![Rust](https://img.shields.io/badge/Rust-WASM-DEA584?logo=rust)](https://rust-lang.org)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Deployed-326CE5?logo=kubernetes)](https://kubernetes.io)
 [![Expo](https://img.shields.io/badge/Expo-Android%20%2B%20iOS-000020?logo=expo)](https://expo.dev)
+[![Telegram](https://img.shields.io/badge/Telegram-Join%20Chat-26A5E4?logo=telegram)](https://t.me/StellarIndigoPay)
 
-[**🌐 Web App**](https://stellarindigopay.com) · [**📱 Mobile App**](https://expo.dev/) · [**🧩 Chrome Extension**](https://chrome.google.com/webstore/) · [**📚 Docs**](docs/README.md) · [**🚀 Quick Start**](#-quick-start)
+[**🌐 Web App**](https://stellarindigopay.com) · [**📱 Mobile App**](https://expo.dev/) · [**🧩 Chrome Extension**](https://chrome.google.com/webstore/) · [**📚 Docs**](docs/README.md) · [**💬 Telegram**](https://t.me/StellarIndigoPay) · [**🚀 Quick Start**](#-quick-start)
 
 </div>
 

@@ -619,6 +619,80 @@ export async function fetchUpdateLikes(
   return data.data;
 }
 
+// ── Project Analytics ─────────────────────────────────────────────
+
+export interface ProjectAnalytics {
+  projectId: string;
+  projectName: string;
+  donorOverview: {
+    totalDonors: number;
+    newDonors30d: number;
+    avgDonationXLM: string;
+    medianDonationXLM: string;
+    totalRaisedXLM: string;
+    totalDonations: number;
+  };
+  topDonors: Array<{
+    donorAddress: string;
+    totalContributed: string;
+    donationCount: number;
+    lastDonationAt: string | null;
+  }>;
+  donationTimeline: Array<{
+    date: string;
+    total: string;
+    count: number;
+  }>;
+  donationDistribution: Array<{
+    bucket: string;
+    count: number;
+    total: string;
+  }>;
+  donorRetention: {
+    totalDonors: number;
+    returningDonors: number;
+    oneTimeDonors: number;
+    retentionPct: number;
+  };
+  milestones: Array<{
+    id: string;
+    title: string;
+    percentage: number;
+    reached: boolean;
+    reachedAt: string | null;
+    transactionHash: string | null;
+    currentProgress: number;
+  }>;
+  campaigns: Array<{
+    id: string;
+    title: string;
+    goalXLM: string;
+    raisedXLM: string;
+    deadline: string;
+    progressPercent: number;
+    status: string;
+  }>;
+  ratingSummary: {
+    averageRating: number;
+    totalRatings: number;
+    distribution: Record<number, number>;
+  };
+}
+
+/**
+ * Fetch project analytics. Only the project owner (wallet) can access.
+ */
+export async function fetchProjectAnalytics(
+  projectId: string,
+  wallet: string,
+): Promise<ProjectAnalytics> {
+  const { data } = await api.get<{ success: boolean; data: ProjectAnalytics }>(
+    `/api/projects/${projectId}/analytics`,
+    { params: { wallet } },
+  );
+  return data.data;
+}
+
 // ── Featured Project ─────────────────────────────────────────────
 /**
  * Fetch the featured project, if one is configured by the backend.
@@ -854,4 +928,60 @@ export async function uploadSupportingDocument(
     form,
   );
   return data.data;
+}
+
+// ── Admin: Queue Monitoring & Actions ──────────────────────────────
+export interface QueueMetric {
+  queue: string;
+  active: number;
+  waiting: number;
+  failed: number;
+  completed: number;
+  depth: number;
+  failure_rate: number;
+  latency: number;
+  paused: boolean;
+}
+
+export async function fetchQueues(adminKey: string): Promise<QueueMetric[]> {
+  const { data } = await api.get<{ success: boolean; data: QueueMetric[] }>(
+    "/api/admin/queues",
+    {
+      headers: { "X-Admin-Key": adminKey },
+    },
+  );
+  return data.data;
+}
+
+export async function pauseQueue(name: string, adminKey: string): Promise<boolean> {
+  const { data } = await api.post<{ success: boolean }>(
+    `/api/admin/queues/${name}/pause`,
+    {},
+    {
+      headers: { "X-Admin-Key": adminKey },
+    },
+  );
+  return data.success;
+}
+
+export async function resumeQueue(name: string, adminKey: string): Promise<boolean> {
+  const { data } = await api.post<{ success: boolean }>(
+    `/api/admin/queues/${name}/resume`,
+    {},
+    {
+      headers: { "X-Admin-Key": adminKey },
+    },
+  );
+  return data.success;
+}
+
+export async function purgeQueue(name: string, adminKey: string): Promise<boolean> {
+  const { data } = await api.post<{ success: boolean }>(
+    `/api/admin/queues/${name}/purge`,
+    {},
+    {
+      headers: { "X-Admin-Key": adminKey },
+    },
+  );
+  return data.success;
 }

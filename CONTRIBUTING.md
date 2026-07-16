@@ -2,6 +2,8 @@
 
 Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 
+Have questions or want to chat? Join our [Telegram group](https://t.me/StellarIndigoPay).
+
 ## Getting started
 
 1. Fork and clone the repo.

@@ -9,6 +9,11 @@ import {
   updateProjectStatus,
   registerProjectOnChain,
   confirmProjectRegistration,
+  fetchQueues,
+  pauseQueue,
+  resumeQueue,
+  purgeQueue,
+  type QueueMetric,
 } from "@/lib/api";
 import { formatXLM, shortenAddress } from "@/utils/format";
 import type { ClimateProject } from "@/utils/types";
@@ -23,6 +28,10 @@ export default function AdminIndex({ publicKey, onConnect }: AdminIndexProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [queues, setQueues] = useState<QueueMetric[]>([]);
+  const [queuesLoading, setQueuesLoading] = useState(false);
+  const [queuesError, setQueuesError] = useState<string | null>(null);
+
   const loadProjects = () => {
     setLoading(true);
     fetchProjects({ limit: 100 })
@@ -33,10 +42,62 @@ export default function AdminIndex({ publicKey, onConnect }: AdminIndexProps) {
       .finally(() => setLoading(false));
   };
 
+  const loadQueues = () => {
+    if (!publicKey) return;
+    setQueuesLoading(true);
+    fetchQueues(publicKey)
+      .then(setQueues)
+      .catch((e: unknown) =>
+        setQueuesError((e as Error).message || "Failed to load queue metrics"),
+      )
+      .finally(() => setQueuesLoading(false));
+  };
+
   useEffect(() => {
     if (!publicKey) return;
     loadProjects();
+    loadQueues();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [publicKey]);
+
+  const handlePauseQueue = async (name: string) => {
+    if (!publicKey) return;
+    try {
+      setQueuesLoading(true);
+      await pauseQueue(name, publicKey);
+      loadQueues();
+    } catch (e: unknown) {
+      setQueuesError((e as Error).message || `Failed to pause queue ${name}`);
+      setQueuesLoading(false);
+    }
+  };
+
+  const handleResumeQueue = async (name: string) => {
+    if (!publicKey) return;
+    try {
+      setQueuesLoading(true);
+      await resumeQueue(name, publicKey);
+      loadQueues();
+    } catch (e: unknown) {
+      setQueuesError((e as Error).message || `Failed to resume queue ${name}`);
+      setQueuesLoading(false);
+    }
+  };
+
+  const handlePurgeQueue = async (name: string) => {
+    if (!publicKey) return;
+    if (!window.confirm(`Are you sure you want to purge queue "${name}"? This deletes all active/waiting jobs.`)) {
+      return;
+    }
+    try {
+      setQueuesLoading(true);
+      await purgeQueue(name, publicKey);
+      loadQueues();
+    } catch (e: unknown) {
+      setQueuesError((e as Error).message || `Failed to purge queue ${name}`);
+      setQueuesLoading(false);
+    }
+  };
 
   const handleApprove = async (p: ClimateProject) => {
     if (!publicKey) return;
@@ -221,6 +282,103 @@ export default function AdminIndex({ publicKey, onConnect }: AdminIndexProps) {
                   </div>
                 </Link>
               ))}
+            </div>
+          </div>
+
+          <div className="border-t border-forest-100 pt-8 animate-fade-in">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-xl font-bold text-forest-900">
+                Queue Monitoring
+              </h2>
+              <button
+                onClick={loadQueues}
+                disabled={queuesLoading}
+                className="btn-secondary text-xs px-2.5 py-1.5"
+              >
+                {queuesLoading ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+
+            {queuesError && (
+              <div className="card mb-4">
+                <p className="text-red-600 font-body">{queuesError}</p>
+              </div>
+            )}
+
+            <div className="overflow-x-auto card p-0">
+              <table className="min-w-full divide-y divide-forest-100 text-left text-sm font-body">
+                <thead className="bg-forest-50 text-xs font-semibold uppercase text-forest-900">
+                  <tr>
+                    <th className="px-6 py-3">Queue</th>
+                    <th className="px-6 py-3">Status</th>
+                    <th className="px-6 py-3">Waiting</th>
+                    <th className="px-6 py-3">Active</th>
+                    <th className="px-6 py-3">Failed</th>
+                    <th className="px-6 py-3">Completed</th>
+                    <th className="px-6 py-3">Failure Rate</th>
+                    <th className="px-6 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-forest-100 bg-white dark:bg-zinc-900 text-forest-700">
+                  {queues.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-4 text-center text-[#8aaa8a]">
+                        No queues configured.
+                      </td>
+                    </tr>
+                  ) : (
+                    queues.map((q) => (
+                      <tr key={q.queue} className="hover:bg-forest-50/50 transition-colors">
+                        <td className="px-6 py-4 font-semibold text-forest-900">{q.queue}</td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`badge text-xs ${
+                              q.paused
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            }`}
+                          >
+                            {q.paused ? "Paused" : "Active"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">{q.waiting}</td>
+                        <td className="px-6 py-4">{q.active}</td>
+                        <td className="px-6 py-4 text-red-600 font-semibold">{q.failed}</td>
+                        <td className="px-6 py-4 text-emerald-600">{q.completed}</td>
+                        <td className="px-6 py-4">{(q.failure_rate * 100).toFixed(1)}%</td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            {q.paused ? (
+                              <button
+                                onClick={() => handleResumeQueue(q.queue)}
+                                disabled={queuesLoading}
+                                className="btn-primary text-xs px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white border-none"
+                              >
+                                Resume
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handlePauseQueue(q.queue)}
+                                disabled={queuesLoading}
+                                className="btn-secondary text-xs px-2 py-1 text-amber-600 border-amber-200 hover:bg-amber-50"
+                              >
+                                Pause
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handlePurgeQueue(q.queue)}
+                              disabled={queuesLoading}
+                              className="btn-secondary text-xs px-2 py-1 text-red-600 border-red-200 hover:bg-red-50"
+                            >
+                              Purge
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

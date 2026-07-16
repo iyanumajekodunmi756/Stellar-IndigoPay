@@ -65,3 +65,7 @@ Paste the transaction hash into [Stellar Expert (testnet)](https://stellar.exper
 ---
 
 > Total time: **≈ 6 minutes** for a brand-new Stellar user.
+
+---
+
+💬 **Questions?** Join our [Telegram community](https://t.me/StellarIndigoPay) — we're happy to help.

@@ -55,6 +55,19 @@ groups:
         annotations:
           summary: "Postgres p99 query latency above 500ms for 10m on op={{ $labels.operation }}"
 
+  - name: stellar-indigopay-backend-backup
+    interval: 30s
+    rules:
+      - alert: BackupVerificationFailed
+        expr: indigopay_backup_verification_passed == 0
+        for: 0m
+        labels:
+          severity: page
+          routing: pagerduty
+        annotations:
+          summary: "Database backup verification failed"
+          description: "The nightly backup at {{ $labels.backup_path }} failed verification. Investigate immediately — the backup may be corrupt or unrecoverable."
+
   - name: stellar-indigopay-backend-readiness
     interval: 30s
     rules:
@@ -69,68 +82,13 @@ groups:
         annotations:
           summary: "Backend readiness has been failing for 3m"
 
-  - name: stellar-indigopay-postgres-replication
-    interval: 30s
-    rules:
-      - alert: PgReplicationLag
-        # Fires when replication lag exceeds 60s (1 min). The DR plan
-        # targets RPO < 1 min, so any lag beyond that is actionable.
-        # Requires postgres_exporter (see k8s/postgres-exporter.yaml).
-        # Metric name: pg_stat_replication_flush_lag_seconds (postgres_exporter ≥0.15)
-        # If using an older exporter, the metric may be pg_stat_replication_flush_lag
-        # (raw bytes from pg_wal_lsn_diff — adjust threshold accordingly).
-        expr: |
-          pg_stat_replication_flush_lag_seconds{application_name="standby"} > 60
-        for: 2m
-        labels:
-          severity: page
-        annotations:
-          summary: "PostgreSQL replication lag is > 60s for 2m"
-          description: |
-            The warm standby is falling behind the primary. If the primary
-            fails now, up to {{ $value }}s of data may be lost.
-            Check network connectivity between primary and standby regions.
-
-      - alert: PgReplicationSlotBehind
-        # Fires when the replication slot has accumulated > 1GB of pending
-        # WAL. This typically means the standby is disconnected or too slow.
-        expr: |
-          pg_replication_slots_retained_bytes{slot_name="standby_slot"} > 1e9
-        for: 5m
+      - alert: QueueDepthHigh
+        expr: sum by (queue) (queue_failed{job="stellar-indigopay-backend"}) > 100
+        for: 10m
         labels:
           severity: warn
         annotations:
-          summary: "Replication slot 'standby_slot' has > 1GB pending WAL"
+          summary: "Queue failed jobs count is high (>100) for 10m on {{ $labels.queue }}"
           description: |
-            The standby is not consuming WAL fast enough. If this persists,
-            the primary may run out of disk space from retained WAL.
-
-      - alert: PgReplicationDown
-        # Fires when no replication metrics are reported for the standby.
-        # postgres_exporter exports pg_stat_replication as a gauge with
-        # application_name as a label. absent() returns 1 if the metric
-        # has no data points.
-        expr: |
-          absent(pg_stat_replication{application_name="standby"})
-        for: 2m
-        labels:
-          severity: page
-        annotations:
-          summary: "No active PostgreSQL replication connections from standby"
-          description: |
-            The standby is not connected to the primary. Streaming
-            replication is down. Failover is not possible until restored.
-
-      - alert: PgStandbyNotReady
-        # The standby pod is not passing readiness checks. Requires
-        # kube-state-metrics to be deployed in the cluster.
-        expr: |
-          kube_pod_status_ready{namespace="stellar-indigopay",pod=~"postgres-standby-.*"} == 0
-        for: 5m
-        labels:
-          severity: warn
-        annotations:
-          summary: "PostgreSQL standby pod is not ready for 5m"
-          description: |
-            The warm standby is not healthy. Streaming replication
-            may be interrupted.
+            There are more than 100 failed jobs in queue '{{ $labels.queue }}' for the last 10 minutes.
+            Check the worker logs.

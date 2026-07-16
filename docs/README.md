@@ -6,6 +6,8 @@ for everything in this directory. Pick the section that matches what you need.
 > **Just want to try the app?** Jump to **[Getting Started](getting-started.md)**
 > for a five-minute first run, or watch the **[Walkthrough](walkthrough.md)**
 > for a guided tour of the donor flow.
+>
+> 💬 **Join the community:** [Telegram](https://t.me/StellarIndigoPay)
 
 ---
 
@@ -122,6 +124,7 @@ for everything in this directory. Pick the section that matches what you need.
 | **[Code of Conduct](../CODE_OF_CONDUCT.md)   | Community expectations.                                                                                                                          |
 | **[Security Policy](../SECURITY.md)**        | How to report a vulnerability.                                                                                                                   |
 | **[Changelog](../CHANGELOG.md)**             | Keep-a-Changelog-format release notes.                                                                                                           |
+| **[Telegram Community](https://t.me/StellarIndigoPay)** | Chat with contributors, ask questions, and share ideas.                                                                           |
 
 ---
 

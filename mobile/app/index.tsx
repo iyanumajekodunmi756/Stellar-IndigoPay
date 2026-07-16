@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
+import { Linking } from "react-native";
 import axios from "axios";
 import * as Notifications from "expo-notifications";
 import { useTheme } from "./theme";
@@ -304,8 +305,52 @@ export default function HomeScreen() {
             colors={[colors.primary]}
           />
         }
+        ListFooterComponent={<Footer colors={colors} />}
         showsVerticalScrollIndicator={false}
       />
+    </View>
+  );
+}
+
+function Footer({
+  colors,
+}: {
+  colors: ReturnType<typeof useTheme>["colors"];
+}) {
+  return (
+    <View style={[styles.footer, { borderTopColor: colors.border }]}>
+      <Text style={[styles.footerText, { color: colors.muted }]}>
+        Open source · MIT License{" "}
+      </Text>
+      <TouchableOpacity
+        onPress={() =>
+          Linking.openURL("https://t.me/StellarIndigoPay").catch(() => {})
+        }
+        accessibilityLabel="Join our Telegram community"
+        accessibilityRole="link"
+      >
+        <Text style={[styles.footerLink, { color: colors.primary }]}>
+          💬 Join our Telegram →
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={() =>
+          Linking.openURL(
+            "https://github.com/Stellar-IndigoPay/Stellar-IndigoPay",
+          ).catch(() => {})
+        }
+        accessibilityLabel="Contribute on GitHub"
+        accessibilityRole="link"
+      >
+        <Text
+          style={[
+            styles.footerLink,
+            { color: colors.primary, marginTop: 6 },
+          ]}
+        >
+          Contribute on GitHub →
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -317,19 +362,29 @@ function Header({
   colors: ReturnType<typeof useTheme>["colors"];
   unreadCount: number;
 }) {
+  const router = useRouter();
   return (
     <View style={[styles.header, { backgroundColor: colors.primary }]}>
       <View style={styles.headerTitleRow}>
         <Text style={[styles.title, { color: colors.headerText }]}>
           Stellar IndigoPay
         </Text>
-        {unreadCount > 0 && (
-          <View style={styles.unreadBadge}>
-            <Text style={styles.unreadBadgeText}>
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </Text>
-          </View>
-        )}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          {unreadCount > 0 && (
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadBadgeText}>
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </Text>
+            </View>
+          )}
+          <TouchableOpacity
+            onPress={() => router.push("/settings" as `${string}`)}
+            accessibilityLabel="Open settings screen"
+            accessibilityRole="button"
+          >
+            <Text style={{ fontSize: 22, color: colors.headerText }}>⚙️</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       <Text style={[styles.subtitle, { color: colors.headerText }]}>
         Climate donations on Stellar
@@ -470,6 +525,21 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 48,
     fontSize: 15,
+  },
+  footer: {
+    alignItems: "center",
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    marginTop: 8,
+  },
+  footerText: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  footerLink: {
+    fontSize: 13,
+    fontWeight: "600",
   },
   skeletonLine: {
     height: 12,

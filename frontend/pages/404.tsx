@@ -40,6 +40,17 @@ export default function NotFound() {
         <p className="mt-16 text-xs text-[#5a7a5a] dark:text-[#8aaa8a] font-body">
           🌱 IndigoPay — every donation tracked on-chain
         </p>
+        <p className="mt-2 text-xs text-[#5a7a5a] dark:text-[#8aaa8a] font-body">
+          💬{" "}
+          <a
+            href="https://t.me/StellarIndigoPay"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#4F46E5] dark:text-[#818CF8] hover:underline font-medium transition-colors"
+          >
+            Join our Telegram community →
+          </a>
+        </p>
       </div>
     </>
   );

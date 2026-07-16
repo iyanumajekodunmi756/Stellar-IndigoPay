@@ -19,9 +19,8 @@
 const crypto = require("crypto");
 const express = require("express");
 const logger = require("../logger");
-const { registry } = require("../services/metrics");
+const { registry, refreshDbPoolMetrics, refreshQueueMetrics } = require("../services/metrics");
 const pool = require("../db/pool");
-const { refreshDbPoolMetrics } = require("../services/metrics");
 
 const router = express.Router();
 
@@ -56,6 +55,7 @@ router.get("/", metricsAuth, async (_req, res, next) => {
     // current as-of this scrape, not stale by up to the collection
     // interval.
     refreshDbPoolMetrics(pool);
+    await refreshQueueMetrics();
     const body = await registry.metrics();
     res.set("Content-Type", registry.contentType);
     res.send(body);
