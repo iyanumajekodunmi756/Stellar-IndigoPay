@@ -10,12 +10,12 @@
  * Rate limit: 5 req/min per IP (createRateLimiter).
  */
 
-'use strict';
+"use strict";
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const pool = require('../db/pool');
-const { createRateLimiter } = require('../middleware/rateLimiter');
+const pool = require("../db/pool");
+const { createRateLimiter } = require("../middleware/rateLimiter");
 
 const analyticsLimiter = createRateLimiter(5, 1); // 5 req/min
 
@@ -23,23 +23,23 @@ const analyticsLimiter = createRateLimiter(5, 1); // 5 req/min
 // GET /:id/analytics?wallet=Gxxx
 // ---------------------------------------------------------------------------
 
-router.get('/:id/analytics', analyticsLimiter, async (req, res, next) => {
+router.get("/:id/analytics", analyticsLimiter, async (req, res, next) => {
   try {
     const projectId = req.params.id;
-    const wallet = typeof req.query.wallet === 'string' ? req.query.wallet.trim() : '';
+    const wallet = typeof req.query.wallet === "string" ? req.query.wallet.trim() : "";
 
     // ── 1. Fetch project + ownership check ──────────────────────────────
     const projectResult = await pool.query(
-      'SELECT id, wallet_address, name, goal_xlm, raised_xlm, donor_count, co2_offset_kg, category, location, status, verified FROM projects WHERE id = $1',
+      "SELECT id, wallet_address, name, goal_xlm, raised_xlm, donor_count, co2_offset_kg, category, location, status, verified FROM projects WHERE id = $1",
       [projectId]
     );
     const project = projectResult.rows[0];
     if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
+      return res.status(404).json({ error: "Project not found" });
     }
 
     if (!wallet || wallet !== project.wallet_address) {
-      return res.status(403).json({ error: 'Access denied. Only the project owner can view analytics.' });
+      return res.status(403).json({ error: "Access denied. Only the project owner can view analytics." });
     }
 
     // ── 2. Donor overview ───────────────────────────────────────────────
@@ -122,17 +122,17 @@ router.get('/:id/analytics', analyticsLimiter, async (req, res, next) => {
        ) sub`,
       [projectId]
     );
-    const retentionPct = parseFloat(retentionResult.rows[0]?.retention_pct || '0');
+    const retentionPct = parseFloat(retentionResult.rows[0]?.retention_pct || "0");
 
     // ── 7. Milestone progress ──────────────────────────────────────────
     const milestonesResult = await pool.query(
-      'SELECT id, title, percentage, reached_at, transaction_hash FROM project_milestones WHERE project_id = $1 ORDER BY percentage ASC',
+      "SELECT id, title, percentage, reached_at, transaction_hash FROM project_milestones WHERE project_id = $1 ORDER BY percentage ASC",
       [projectId]
     );
 
     // ── 8. Campaign performance ────────────────────────────────────────
     const campaignsResult = await pool.query(
-      'SELECT id, title, goal_xlm, deadline, created_at FROM project_campaigns WHERE project_id = $1 ORDER BY created_at DESC',
+      "SELECT id, title, goal_xlm, deadline, created_at FROM project_campaigns WHERE project_id = $1 ORDER BY created_at DESC",
       [projectId]
     );
 
@@ -160,18 +160,18 @@ router.get('/:id/analytics', analyticsLimiter, async (req, res, next) => {
            WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3`,
           [projectId, campaign.created_at, campaign.deadline]
         );
-        const raised = parseFloat(progressResult.rows[0].raised || '0');
-        const goal = parseFloat(campaign.goal_xlm || '0');
+        const raised = parseFloat(progressResult.rows[0].raised || "0");
+        const goal = parseFloat(campaign.goal_xlm || "0");
         const progressPercent = goal > 0 ? Math.min(Math.round((raised / goal) * 100), 100) : 0;
         const completed = progressPercent >= 100 || new Date(campaign.deadline) < new Date();
         return {
           id: campaign.id,
           title: campaign.title,
-          goalXLM: campaign.goal_xlm?.toString() || '0',
+          goalXLM: campaign.goal_xlm?.toString() || "0",
           raisedXLM: raised.toFixed(2),
           deadline: new Date(campaign.deadline).toISOString(),
           progressPercent,
-          status: completed ? (progressPercent >= 100 ? 'completed' : 'ended') : 'active',
+          status: completed ? (progressPercent >= 100 ? "completed" : "ended") : "active",
         };
       })
     );
@@ -185,26 +185,26 @@ router.get('/:id/analytics', analyticsLimiter, async (req, res, next) => {
         donorOverview: {
           totalDonors: donorOverview.total_donors || 0,
           newDonors30d: donorOverview.new_donors_30d || 0,
-          avgDonationXLM: donorOverview.avg_donation_xlm || '0',
-          medianDonationXLM: donorOverview.median_donation_xlm || '0',
-          totalRaisedXLM: donorOverview.total_raised_xlm || '0',
+          avgDonationXLM: donorOverview.avg_donation_xlm || "0",
+          medianDonationXLM: donorOverview.median_donation_xlm || "0",
+          totalRaisedXLM: donorOverview.total_raised_xlm || "0",
           totalDonations: donorOverview.total_donations || 0,
         },
         topDonors: topDonorsResult.rows.map((row) => ({
           donorAddress: row.donor_address,
-          totalContributed: row.total_contributed?.toString() || '0',
+          totalContributed: row.total_contributed?.toString() || "0",
           donationCount: row.donation_count,
           lastDonationAt: row.last_donation_at ? new Date(row.last_donation_at).toISOString() : null,
         })),
         donationTimeline: timeSeriesResult.rows.map((row) => ({
           date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date).slice(0, 10),
-          total: row.total?.toString() || '0',
+          total: row.total?.toString() || "0",
           count: row.count,
         })),
         donationDistribution: distributionResult.rows.map((row) => ({
           bucket: row.bucket,
           count: row.count,
-          total: row.total?.toString() || '0',
+          total: row.total?.toString() || "0",
         })),
         donorRetention: {
           totalDonors: retentionResult.rows[0]?.total_donors || 0,
@@ -213,8 +213,8 @@ router.get('/:id/analytics', analyticsLimiter, async (req, res, next) => {
           retentionPct,
         },
         milestones: milestonesResult.rows.map((row) => {
-          const goalXLM = parseFloat(project.goal_xlm || '0');
-          const raisedXLM = parseFloat(project.raised_xlm || '0');
+          const goalXLM = parseFloat(project.goal_xlm || "0");
+          const raisedXLM = parseFloat(project.raised_xlm || "0");
           const milestoneTarget = goalXLM * (row.percentage / 100);
           const currentProgress = goalXLM > 0 ? Math.min(Math.round((raisedXLM / milestoneTarget) * 100), 100) : 0;
           return {
@@ -229,7 +229,7 @@ router.get('/:id/analytics', analyticsLimiter, async (req, res, next) => {
         }),
         campaigns,
         ratingSummary: {
-          averageRating: parseFloat(ratingResult.rows[0]?.average_rating || '0'),
+          averageRating: parseFloat(ratingResult.rows[0]?.average_rating || "0"),
           totalRatings: ratingResult.rows[0]?.total_ratings || 0,
           distribution: {
             1: ratingResult.rows[0]?.star_1 || 0,
