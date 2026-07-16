@@ -985,3 +985,74 @@ export async function purgeQueue(name: string, adminKey: string): Promise<boolea
   );
   return data.success;
 }
+
+// ── Admin: Webhook Dead-Letter Queue Management ──────────────────────────────
+export interface WebhookDelivery {
+  id: string;
+  projectId: string;
+  projectName: string | null;
+  eventId: string;
+  eventType: string;
+  status: "pending" | "delivered" | "failed" | "dlq";
+  attempts: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+  nextAttemptAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchDeadLetterWebhooks(
+  adminKey: string,
+  params?: { projectId?: string; limit?: number; page?: number },
+): Promise<{ data: WebhookDelivery[]; total: number; page: number; pageSize: number }> {
+  const { data } = await api.get<{
+    success: boolean;
+    data: WebhookDelivery[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>("/api/admin/webhooks/dead-letter", {
+    params,
+    headers: { "X-Admin-Key": adminKey },
+  });
+  return data;
+}
+
+export async function replayWebhookDelivery(
+  deliveryId: string,
+  adminKey: string,
+): Promise<WebhookDelivery> {
+  const { data } = await api.post<{ success: boolean; data: WebhookDelivery }>(
+    `/api/admin/webhooks/dead-letter/${deliveryId}/replay`,
+    {},
+    { headers: { "X-Admin-Key": adminKey } },
+  );
+  return data.data;
+}
+
+export async function replayAllWebhookDeliveries(
+  projectId: string,
+  adminKey: string,
+): Promise<number> {
+  const { data } = await api.post<{ success: boolean; count: number }>(
+    "/api/admin/webhooks/dead-letter/replay-all",
+    { projectId },
+    { headers: { "X-Admin-Key": adminKey } },
+  );
+  return data.count;
+}
+
+export async function fetchWebhookDeliveries(
+  adminKey: string,
+  params?: { projectId?: string; status?: string; limit?: number },
+): Promise<WebhookDelivery[]> {
+  const { data } = await api.get<{ success: boolean; data: WebhookDelivery[] }>(
+    "/api/admin/webhooks/deliveries",
+    {
+      params,
+      headers: { "X-Admin-Key": adminKey },
+    },
+  );
+  return data.data;
+}

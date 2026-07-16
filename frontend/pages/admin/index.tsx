@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import WalletConnect from "@/components/WalletConnect";
+import WebhookManager from "@/components/admin/WebhookManager";
 import {
   fetchProjects,
   updateProjectStatus,
@@ -382,6 +383,8 @@ export default function AdminIndex({ publicKey, onConnect }: AdminIndexProps) {
               </table>
             </div>
           </div>
+
+          <WebhookManager adminKey={publicKey} />
         </div>
       )}
     </div>
