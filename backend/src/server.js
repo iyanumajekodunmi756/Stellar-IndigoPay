@@ -60,6 +60,8 @@ const {
 } = require("./services/webhookQueue");
 const { start: startPushQueue } = require("./services/pushQueue");
 const { startIndexer } = require("./services/indexerService");
+const { startReconciler, stopReconciler } = require("./services/indexerReconciler");
+const { startDLQWorker, stopDLQWorker } = require("./services/indexerDLQWorker");
 const lifecycle = require("./services/lifecycle");
 
 Sentry.init({
@@ -406,6 +408,14 @@ async function startServer() {
     } catch {
       // ignore
     }
+  });
+
+  lifecycle.onShutdown(async () => {
+    await stopReconciler();
+  });
+
+  lifecycle.onShutdown(async () => {
+    await stopDLQWorker();
   });
 
   // pg-boss queues: each one exposes a `stop()` method that drains in-flight
