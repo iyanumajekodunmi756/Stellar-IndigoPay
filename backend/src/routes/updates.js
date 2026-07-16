@@ -10,7 +10,6 @@ const { v4: uuidv4 } = require("uuid");
 const pool = require("../db/pool");
 const { mapProjectUpdateRow, mapProjectRow } = require("../services/store");
 const { sendUpdateNotifications } = require("../services/email");
-const { sendUpdatePushNotifications } = require("../services/push");
 const { AppError } = require("../errors");
 const { enqueuePushNotification } = require("../services/pushQueue");
 

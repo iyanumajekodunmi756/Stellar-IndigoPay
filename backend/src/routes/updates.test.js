@@ -4,8 +4,8 @@ jest.mock("../db/pool", () => ({ query: jest.fn() }));
 jest.mock("../services/email", () => ({
   sendUpdateNotifications: jest.fn().mockResolvedValue(undefined),
 }));
-jest.mock("../services/push", () => ({
-  sendUpdatePushNotifications: jest.fn().mockResolvedValue(undefined),
+jest.mock("../services/pushQueue", () => ({
+  enqueuePushNotification: jest.fn().mockResolvedValue(undefined),
 }));
 
 process.env.ADMIN_API_KEY = "test-admin-key";
