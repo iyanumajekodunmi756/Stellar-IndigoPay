@@ -89,13 +89,13 @@ This document lists all events emitted by the Stellar IndigoPay Soroban smart co
 
 ---
 
-## 9. `voted`
+## 9. `rate_lim`
 
-**Description**: Emitted when a badge holder casts a weighted vote on a verification proposal.
+**Description**: Emitted when the admin updates the per-donor per-project donation rate limit.
 
-| Event Name | Topics                           | Data                                   | When Emitted                  |
-| ---------- | -------------------------------- | -------------------------------------- | ----------------------------- |
-| `voted`    | `["voted", voter, project_id]`   | `(approve: bool, weight: u32)`         | On successful vote            |
+| Event Name | Topics        | Data                                      | When Emitted                          |
+| ---------- | ------------- | ----------------------------------------- | ------------------------------------- |
+| `rate_lim` | `["rate_lim"]` | `{ "max_donations": u32, "window_ledgers": u32 }` | When admin calls `set_donation_rate_limit` |
 
 ---
 

@@ -112,6 +112,14 @@ pub struct DonorStats {
     pub co2_offset_grams: i128,
 }
 
+/// Sliding-window donation counter for a (donor, project_id) pair.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RateLimitWindow {
+    pub window_start: u32,
+    pub count: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ImpactNFT {
@@ -183,6 +191,11 @@ pub enum DataKey {
     HasVoted(String, Address),
     // Per-donor per-project cumulative donation total for milestone NFT gating
     DonorProjectTotal(String, Address),
+    // Per-donor per-project sliding-window donation rate limit
+    DonorRateLimit(Address, String),
+    // Admin-configurable donation rate limit overrides (instance storage)
+    DonationRateLimitMax,
+    DonationRateLimitWindow,
     // Per-project milestone NFT: one per (project_id, donor) pair
     ProjectMilestoneNFT(String, Address),
     // Contract upgrade and multi-currency support
@@ -239,6 +252,9 @@ const STROOP: i128 = 10_000_000;
 // 7 days × 24 h × 3600 s ÷ 5 s per ledger ≈ 120_960 ledgers — used as the
 // default when `create_proposal` is called without an explicit duration.
 const VOTING_WINDOW_LEDGERS: u32 = 120_960;
+
+const DEFAULT_DONATION_RATE_LIMIT_MAX: u32 = 10;
+const DEFAULT_DONATION_RATE_LIMIT_WINDOW: u32 = 720;
 
 // Bounds on caller-supplied voting durations. Floor (~1 hour) keeps the
 // window long enough to be observed; ceiling (~30 days) bounds storage TTL
@@ -615,6 +631,40 @@ impl IndigoPayContract {
         if amount <= 0 {
             panic!("Donation amount must be positive");
         }
+
+        let current_ledger = env.ledger().sequence();
+        let max_donations: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DonationRateLimitMax)
+            .unwrap_or(DEFAULT_DONATION_RATE_LIMIT_MAX);
+        let window_ledgers: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DonationRateLimitWindow)
+            .unwrap_or(DEFAULT_DONATION_RATE_LIMIT_WINDOW);
+
+        let rate_key = DataKey::DonorRateLimit(donor.clone(), project_id.clone());
+        let mut window: RateLimitWindow =
+            env.storage()
+                .instance()
+                .get(&rate_key)
+                .unwrap_or(RateLimitWindow {
+                    window_start: current_ledger,
+                    count: 0,
+                });
+        if current_ledger - window.window_start >= window_ledgers {
+            window.window_start = current_ledger;
+            window.count = 0;
+        }
+        if window.count >= max_donations {
+            panic!("Donation rate limit exceeded");
+        }
+        window.count = window
+            .count
+            .checked_add(1)
+            .expect("RateLimitWindow count overflow");
+        env.storage().instance().set(&rate_key, &window);
 
         let mut project: Project = env
             .storage()
@@ -1582,6 +1632,49 @@ impl IndigoPayContract {
     /// Get the configured USDC token address.
     pub fn get_usdc_token(env: Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::USDCTokenAddress)
+    }
+
+    /// Admin-only: Configure the per-donor per-project donation rate limit.
+    pub fn set_donation_rate_limit(
+        env: Env,
+        admin: Address,
+        max_donations: u32,
+        window_ledgers: u32,
+    ) {
+        admin.require_auth();
+        require_admin(&env, &admin);
+        require_not_paused(&env);
+        if max_donations == 0 {
+            panic!("max_donations must be positive");
+        }
+        if window_ledgers == 0 {
+            panic!("window_ledgers must be positive");
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::DonationRateLimitMax, &max_donations);
+        env.storage()
+            .instance()
+            .set(&DataKey::DonationRateLimitWindow, &window_ledgers);
+        env.events().publish(
+            (symbol_short!("rate_lim"),),
+            (max_donations, window_ledgers),
+        );
+    }
+
+    /// Get the configured donation rate limit (max donations, window in ledgers).
+    pub fn get_donation_rate_limit(env: Env) -> (u32, u32) {
+        let max: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DonationRateLimitMax)
+            .unwrap_or(DEFAULT_DONATION_RATE_LIMIT_MAX);
+        let window: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DonationRateLimitWindow)
+            .unwrap_or(DEFAULT_DONATION_RATE_LIMIT_WINDOW);
+        (max, window)
     }
 
     /// Admin-only: Set the price oracle contract address used by `donate_usdc`.
@@ -2943,6 +3036,179 @@ mod tests {
     fn test_two_step_admin_transfer_cancel_without_pending_fails() {
         let (_env, _cid, client, admin) = setup_admin_only();
         client.cancel_admin_transfer(&admin);
+    }
+
+    // ─── Donation rate limit tests ────────────────────────────────────────────
+
+    /// Mint XLM tokens for a donor and return the token contract address.
+    fn mint_xlm(env: &Env, donor: &Address, amount: i128) -> Address {
+        let token_admin = Address::generate(env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        StellarAssetClient::new(env, &token).mint(donor, &amount);
+        token
+    }
+
+    #[test]
+    fn test_donation_rate_limit_allows_up_to_max_within_window() {
+        let (env, _cid, client, admin, pid) = setup();
+        client.set_donation_rate_limit(&admin, &3, &100);
+        let donor = Address::generate(&env);
+        let token = mint_xlm(&env, &donor, 3 * STROOP);
+        for i in 0..3u32 {
+            client.donate(&token, &donor, &pid, &STROOP, &i);
+        }
+        assert_eq!(client.get_project(&pid).total_raised, 3 * STROOP);
+    }
+
+    #[test]
+    #[should_panic(expected = "Donation rate limit exceeded")]
+    fn test_donation_rate_limit_blocks_max_plus_one() {
+        let (env, _cid, client, admin, pid) = setup();
+        client.set_donation_rate_limit(&admin, &3, &100);
+        let donor = Address::generate(&env);
+        let token = mint_xlm(&env, &donor, 4 * STROOP);
+        for i in 0..3u32 {
+            client.donate(&token, &donor, &pid, &STROOP, &i);
+        }
+        client.donate(&token, &donor, &pid, &STROOP, &3u32);
+    }
+
+    #[test]
+    fn test_donation_rate_limit_resets_after_window_elapses() {
+        let (env, cid, client, admin, pid) = setup();
+        client.set_donation_rate_limit(&admin, &2, &50);
+        let donor = Address::generate(&env);
+        let token = mint_xlm(&env, &donor, 3 * STROOP);
+        let window_start = env.ledger().sequence();
+        client.donate(&token, &donor, &pid, &STROOP, &0u32);
+        client.donate(&token, &donor, &pid, &STROOP, &1u32);
+
+        extend_ttl(&env, &cid);
+        env.ledger().set_sequence_number(window_start + 50);
+        client.donate(&token, &donor, &pid, &STROOP, &2u32);
+        assert_eq!(client.get_project(&pid).total_raised, 3 * STROOP);
+    }
+
+    #[test]
+    fn test_donation_rate_limit_off_by_one_window_boundary() {
+        let (env, cid, client, admin, pid) = setup();
+        client.set_donation_rate_limit(&admin, &2, &50);
+        let donor = Address::generate(&env);
+        let token = mint_xlm(&env, &donor, 3 * STROOP);
+        let window_start = env.ledger().sequence();
+        client.donate(&token, &donor, &pid, &STROOP, &0u32);
+        client.donate(&token, &donor, &pid, &STROOP, &1u32);
+
+        // Still inside the window — third donation must be blocked.
+        extend_ttl(&env, &cid);
+        env.ledger().set_sequence_number(window_start + 50 - 1);
+        let blocked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.donate(&token, &donor, &pid, &STROOP, &2u32);
+        }));
+        assert!(
+            blocked.is_err(),
+            "donation at window boundary - 1 should be blocked"
+        );
+
+        // Exactly at window expiry — window resets and donation succeeds.
+        env.ledger().set_sequence_number(window_start + 50);
+        client.donate(&token, &donor, &pid, &STROOP, &2u32);
+        assert_eq!(client.get_project(&pid).total_raised, 3 * STROOP);
+    }
+
+    #[test]
+    fn test_donation_rate_limit_independent_per_project() {
+        let (env, _cid, client, admin, pid) = setup();
+        client.set_donation_rate_limit(&admin, &2, &100);
+        let pid2 = String::from_str(&env, "proj-002");
+        let wallet2 = Address::generate(&env);
+        client.register_project(
+            &admin,
+            &pid2,
+            &String::from_str(&env, "Second Project"),
+            &wallet2,
+            &100u32,
+        );
+
+        let donor = Address::generate(&env);
+        let token = mint_xlm(&env, &donor, 5 * STROOP);
+        client.donate(&token, &donor, &pid, &STROOP, &0u32);
+        client.donate(&token, &donor, &pid, &STROOP, &1u32);
+        // pid is at limit; pid2 still has its own counter.
+        client.donate(&token, &donor, &pid2, &STROOP, &2u32);
+        assert_eq!(client.get_project(&pid2).total_raised, STROOP);
+    }
+
+    #[test]
+    fn test_donation_rate_limit_independent_per_donor() {
+        let (env, _cid, client, admin, pid) = setup();
+        client.set_donation_rate_limit(&admin, &2, &100);
+        let donor_a = Address::generate(&env);
+        let donor_b = Address::generate(&env);
+        let token_a = mint_xlm(&env, &donor_a, 3 * STROOP);
+        let token_b = mint_xlm(&env, &donor_b, 3 * STROOP);
+
+        client.donate(&token_a, &donor_a, &pid, &STROOP, &0u32);
+        client.donate(&token_a, &donor_a, &pid, &STROOP, &1u32);
+        // donor_a is at limit; donor_b still has its own counter.
+        client.donate(&token_b, &donor_b, &pid, &STROOP, &2u32);
+        assert_eq!(client.get_project(&pid).total_raised, 3 * STROOP);
+    }
+
+    #[test]
+    fn test_set_donation_rate_limit_takes_effect_immediately() {
+        let (env, _cid, client, admin, pid) = setup();
+        let donor = Address::generate(&env);
+        let token = mint_xlm(&env, &donor, 5 * STROOP);
+
+        client.set_donation_rate_limit(&admin, &1, &100);
+        client.donate(&token, &donor, &pid, &STROOP, &0u32);
+
+        let blocked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.donate(&token, &donor, &pid, &STROOP, &1u32);
+        }));
+        assert!(
+            blocked.is_err(),
+            "new limit of 1 should block second donation"
+        );
+
+        client.set_donation_rate_limit(&admin, &3, &100);
+        assert_eq!(client.get_donation_rate_limit(), (3, 100));
+        client.donate(&token, &donor, &pid, &STROOP, &1u32);
+        client.donate(&token, &donor, &pid, &STROOP, &2u32);
+        assert_eq!(client.get_project(&pid).total_raised, 3 * STROOP);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only admin can perform this action")]
+    fn test_set_donation_rate_limit_non_admin_fails() {
+        let (env, _cid, client, _admin, _pid) = setup();
+        let imposter = Address::generate(&env);
+        client.set_donation_rate_limit(&imposter, &5, &100);
+    }
+
+    #[test]
+    fn test_donation_rate_limit_first_donation_succeeds() {
+        let (env, _cid, client, _admin, pid) = setup();
+        let donor = Address::generate(&env);
+        let token = mint_xlm(&env, &donor, STROOP);
+        client.donate(&token, &donor, &pid, &STROOP, &0u32);
+        assert_eq!(client.get_donation_rate_limit(), (10, 720));
+        assert_eq!(client.get_project(&pid).total_raised, STROOP);
+    }
+
+    #[test]
+    fn test_get_donation_rate_limit_defaults() {
+        let (_env, _cid, client, _admin, _pid) = setup();
+        assert_eq!(
+            client.get_donation_rate_limit(),
+            (
+                DEFAULT_DONATION_RATE_LIMIT_MAX,
+                DEFAULT_DONATION_RATE_LIMIT_WINDOW
+            )
+        );
     }
 
     // ─── Contract-level pause tests ─────────────────────────────────────────
