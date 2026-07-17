@@ -124,7 +124,7 @@ jobs:
   e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -144,6 +144,10 @@ jobs:
       - name: Install Playwright browsers
         working-directory: frontend
         run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Generate visual snapshots for Linux
+        working-directory: frontend
+        run: npx playwright test e2e/visual.spec.ts --update-snapshots --project=chromium
 
       - name: Run Playwright tests
         working-directory: frontend
