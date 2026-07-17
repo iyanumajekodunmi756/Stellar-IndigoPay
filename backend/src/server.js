@@ -70,6 +70,8 @@ const { startIndexer } = require("./services/indexerService");
 const { startReconciler, stopReconciler } = require("./services/indexerReconciler");
 const { startDLQWorker, stopDLQWorker } = require("./services/indexerDLQWorker");
 const lifecycle = require("./services/lifecycle");
+const guardianService = require("./services/guardian");
+
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN || "",
@@ -465,6 +467,16 @@ async function startServer() {
     );
   }
 
+  try {
+    guardianService.start();
+    logger.info({ event: "guardian_scheduler_started" }, "Guardian service scheduler started");
+  } catch (err) {
+    logger.error(
+      { event: "guardian_startup_error", err: err.message },
+      "Guardian service failed to start",
+    );
+  }
+
   // The Stellar Horizon stream in the indexer holds the event loop open.
   // Register a shutdown hook so the stream is closed cleanly on SIGTERM.
   lifecycle.onShutdown(async () => {
@@ -477,6 +489,11 @@ async function startServer() {
     try {
       const oracleService = require("./services/oracleService");
       if (typeof oracleService.stop === "function") oracleService.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      if (typeof guardianService.stop === "function") guardianService.stop();
     } catch {
       // ignore
     }
