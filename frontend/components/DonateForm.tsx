@@ -305,7 +305,7 @@ export default function DonateForm({
 
   if (step === "success" && txHash) {
     return (
-      <div className="card text-center animate-slide-up">
+      <div className="card text-center animate-slide-up" data-testid="donation-success">
         <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#4F46E5] to-[#7C3AED] flex items-center justify-center text-2xl mx-auto mb-4 shadow-lg">
           🌱
         </div>
@@ -403,6 +403,7 @@ export default function DonateForm({
             min="1"
             step="1"
             className="input-field"
+            data-testid="donation-amount"
             aria-invalid={Boolean(amount) && !isValid}
             aria-describedby={amount && !isValid ? "donate-amount-error" : undefined}
             inputMode="decimal"
@@ -513,6 +514,7 @@ export default function DonateForm({
         onClick={handleDonate}
         disabled={!isValid || step !== "idle"}
         className="btn-primary w-full flex items-center justify-center gap-2"
+        data-testid="donate-button"
       >
         {step === "building" && (
           <>

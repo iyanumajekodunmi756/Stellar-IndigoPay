@@ -837,11 +837,225 @@ mod fuzz {
 
             set_project_co2_rate_direct(&env, &cid, &project_id, u32::MAX);
 
-            client.donate_usdc(&usdc_token, &donor, &project_id, &usdc_amount, &MSG_HASH);
-
-            let donor_stats = client.get_donor_stats(&donor);
-            prop_assert!(donor_stats.co2_offset_grams >= 0, "CO₂ offset should be non-negative at max rate");
-            prop_assert_eq!(donor_stats.donation_count, 1);
+            let result = client.try_donate_usdc(&usdc_token, &donor, &project_id, &usdc_amount, &MSG_HASH);
+            prop_assert!(result.is_err(), "donate_usdc should panic on CO2 overflow");
         }
+    } // END of first proptest!
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn prop_fuzz_badge_weighted_voting(
+            amount in 10i128 * STROOP..=10_000i128 * STROOP,
+        ) {
+            let (env, admin, client, project_id) = setup_with_admin();
+            client.create_proposal(&admin, &project_id, &720u32);
+
+            let token_admin = Address::generate(&env);
+            let token = env
+                .register_stellar_asset_contract_v2(token_admin)
+                .address();
+
+            let donor = Address::generate(&env);
+            mint_tokens(&env, &token, &donor, amount);
+            client.donate(&token, &donor, &project_id, &amount, &42u32);
+
+            let stats = client.get_donor_stats(&donor);
+            let expected_weight = match stats.badge {
+                BadgeTier::Seedling => 1u32,
+                BadgeTier::Tree => 3u32,
+                BadgeTier::Forest => 10u32,
+                BadgeTier::EarthGuardian => 25u32,
+                BadgeTier::None => 0u32,
+            };
+
+            client.vote_verify_project(&donor, &project_id, &true);
+
+            let proposal = client.get_proposal(&project_id);
+            prop_assert_eq!(proposal.votes_for, expected_weight);
+        }
+    } // END of proptest!
+
+    #[test]
+    fn test_zero_amount_donation_rejected() {
+        let (env, _cid, client, project_id, token) = setup();
+        let donor = Address::generate(&env);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.donate(&token, &donor, &project_id, &0i128, &42u32);
+        }));
+        assert!(result.is_err(), "donate with amount=0 should panic");
+    }
+
+    #[test]
+    fn test_deactivated_project_cannot_be_paused() {
+        let (_env, admin, client, project_id) = setup_with_admin();
+
+        client.deactivate_project(&admin, &project_id);
+
+        // Pausing a deactivated project must panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.pause_project(&admin, &project_id);
+        }));
+        assert!(
+            result.is_err(),
+            "pause_project should panic when project is deactivated"
+        );
+
+        let project = client.get_project(&project_id);
+        assert!(!project.active);
+    }
+
+    #[test]
+    fn test_zero_co2_rate_rejected() {
+        let (_env, admin, client, project_id) = setup_with_admin();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.update_project_co2_rate(&admin, &project_id, &0u32);
+        }));
+        assert!(
+            result.is_err(),
+            "update_project_co2_rate with 0 should panic"
+        );
+    }
+
+    #[test]
+    fn test_excessive_co2_rate_rejected() {
+        let (_env, admin, client, project_id) = setup_with_admin();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.update_project_co2_rate(&admin, &project_id, &(MAX_CO2_PER_XLM + 1));
+        }));
+        assert!(
+            result.is_err(),
+            "update_project_co2_rate > MAX should panic"
+        );
+    }
+
+    #[test]
+    fn test_admin_transfer_happy_path() {
+        let (env, admin, client, _project_id) = setup_with_admin();
+        let new_admin = Address::generate(&env);
+
+        client.transfer_admin(&admin, &new_admin);
+        let pending = client.get_pending_admin();
+        assert_eq!(pending, Some(new_admin.clone()));
+
+        client.accept_admin();
+        let stored_admin = client.get_admin();
+        assert_eq!(stored_admin, new_admin);
+        assert_eq!(client.get_pending_admin(), None);
+    }
+
+    #[test]
+    fn test_admin_transfer_cancel() {
+        let (env, admin, client, _project_id) = setup_with_admin();
+        let new_admin = Address::generate(&env);
+        client.transfer_admin(&admin, &new_admin);
+        assert!(client.get_pending_admin().is_some());
+
+        client.cancel_admin_transfer(&admin);
+        assert!(client.get_pending_admin().is_none());
+        assert_eq!(client.get_admin(), admin);
+    }
+
+    #[test]
+    fn test_duplicate_project_id_rejected() {
+        let (env, admin, client, project_id) = setup_with_admin();
+        let wallet2 = Address::generate(&env);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.register_project(
+                &admin,
+                &project_id,
+                &SorobanString::from_str(&env, "Duplicate"),
+                &wallet2,
+                &50u32,
+            );
+        }));
+        assert!(
+            result.is_err(),
+            "register_project with duplicate ID should panic"
+        );
+    }
+
+    #[test]
+    fn test_veto_before_resolution() {
+        let (_env, admin, client, project_id) = setup_with_admin();
+        client.create_proposal(&admin, &project_id, &720u32);
+        let proposal_before = client.get_proposal(&project_id);
+        assert!(!proposal_before.resolved);
+
+        client.veto_proposal(&admin, &project_id);
+        let proposal_after = client.get_proposal(&project_id);
+        assert!(proposal_after.resolved);
+    }
+
+    #[test]
+    fn test_proposal_default_duration() {
+        let (_env, admin, client, project_id) = setup_with_admin();
+        client.create_proposal(&admin, &project_id, &0u32);
+        let proposal = client.get_proposal(&project_id);
+        assert!(!proposal.resolved);
+        assert_eq!(proposal.votes_for, 0u32);
+        assert_eq!(proposal.votes_against, 0u32);
+    }
+
+    #[test]
+    fn test_deactivate_all_projects() {
+        let (env, admin, client, project_id) = setup_with_admin();
+
+        let wallet_b = Address::generate(&env);
+        let project_b = SorobanString::from_str(&env, "proj-bulk-b");
+        client.register_project(
+            &admin,
+            &project_b,
+            &SorobanString::from_str(&env, "Bulk B"),
+            &wallet_b,
+            &75u32,
+        );
+
+        assert!(client.get_project(&project_id).active);
+        assert!(client.get_project(&project_b).active);
+
+        client.deactivate_all_projects(&admin);
+
+        assert!(!client.get_project(&project_id).active);
+        assert!(!client.get_project(&project_b).active);
+    }
+
+    #[test]
+    fn test_badge_weighted_voting_seedling_and_earth_guardian() {
+        let (env, admin, client, project_id) = setup_with_admin();
+        client.create_proposal(&admin, &project_id, &720u32);
+
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+
+        let donor_seedling = Address::generate(&env);
+        let amt_seedling = 10i128 * STROOP;
+        mint_tokens(&env, &token, &donor_seedling, amt_seedling);
+        client.donate(&token, &donor_seedling, &project_id, &amt_seedling, &42u32);
+
+        client.vote_verify_project(&donor_seedling, &project_id, &true);
+
+        let donor_earth = Address::generate(&env);
+        let amt_earth = 2000i128 * STROOP;
+        mint_tokens(&env, &token, &donor_earth, amt_earth);
+        client.donate(&token, &donor_earth, &project_id, &amt_earth, &42u32);
+
+        client.vote_verify_project(&donor_earth, &project_id, &true);
+
+        let proposal = client.get_proposal(&project_id);
+        assert_eq!(proposal.votes_for, 26u32);
+    }
+
+    #[test]
+    fn test_badge_weighted_voting_none_tier_panics() {
+        let (env, admin, client, project_id) = setup_with_admin();
+        client.create_proposal(&admin, &project_id, &720u32);
+
+        let voter = Address::generate(&env);
+        let result = client.try_vote_verify_project(&voter, &project_id, &true);
+        assert!(result.is_err(), "None tier voter should panic");
     }
 }
