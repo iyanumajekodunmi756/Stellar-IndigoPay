@@ -89,6 +89,16 @@ This document lists all events emitted by the Stellar IndigoPay Soroban smart co
 
 ---
 
+## 9. `voted`
+
+**Description**: Emitted when a badge holder casts a weighted vote on a verification proposal.
+
+| Event Name | Topics                           | Data                                   | When Emitted                  |
+| ---------- | -------------------------------- | -------------------------------------- | ----------------------------- |
+| `voted`    | `["voted", voter, project_id]`   | `(approve: bool, weight: u32)`         | On successful vote            |
+
+---
+
 ## Usage Notes
 
 - All events follow Soroban’s standard event format: `topics: Vec<Val>`, `data: Val`.

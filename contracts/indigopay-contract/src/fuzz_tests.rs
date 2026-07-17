@@ -689,6 +689,81 @@ mod fuzz {
             prop_assert_eq!(proposal.votes_against, 0u32);
         }
 
+        #[test]
+        fn prop_badge_weighted_voting_seedling_and_earth_guardian(
+            _dummy in 0..1,
+        ) {
+            let (env, admin, client, project_id) = setup_with_admin();
+            client.create_proposal(&admin, &project_id, &720u32);
+
+            let token_admin = Address::generate(&env);
+            let token = env
+                .register_stellar_asset_contract_v2(token_admin)
+                .address();
+
+            let donor_seedling = Address::generate(&env);
+            let amt_seedling = 10i128 * STROOP;
+            mint_tokens(&env, &token, &donor_seedling, amt_seedling);
+            client.donate(&token, &donor_seedling, &project_id, &amt_seedling, &42u32);
+
+            client.vote_verify_project(&donor_seedling, &project_id, &true);
+
+            let donor_earth = Address::generate(&env);
+            let amt_earth = 2000i128 * STROOP;
+            mint_tokens(&env, &token, &donor_earth, amt_earth);
+            client.donate(&token, &donor_earth, &project_id, &amt_earth, &42u32);
+
+            client.vote_verify_project(&donor_earth, &project_id, &true);
+
+            let proposal = client.get_proposal(&project_id);
+            prop_assert_eq!(proposal.votes_for, 26u32);
+        }
+
+        #[test]
+        fn prop_badge_weighted_voting_none_tier_panics(
+            _dummy in 0..1,
+        ) {
+            let (env, admin, client, project_id) = setup_with_admin();
+            client.create_proposal(&admin, &project_id, &720u32);
+            
+            let voter = Address::generate(&env);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                client.vote_verify_project(&voter, &project_id, &true);
+            }));
+            prop_assert!(result.is_err(), "None tier voter should panic");
+        }
+
+        #[test]
+        fn prop_fuzz_badge_weighted_voting(
+            amount in 10i128 * STROOP..=10_000i128 * STROOP,
+        ) {
+            let (env, admin, client, project_id) = setup_with_admin();
+            client.create_proposal(&admin, &project_id, &720u32);
+
+            let token_admin = Address::generate(&env);
+            let token = env
+                .register_stellar_asset_contract_v2(token_admin)
+                .address();
+
+            let donor = Address::generate(&env);
+            mint_tokens(&env, &token, &donor, amount);
+            client.donate(&token, &donor, &project_id, &amount, &42u32);
+
+            let stats = client.get_donor_stats(&donor);
+            let expected_weight = match stats.badge {
+                BadgeTier::Seedling => 1u32,
+                BadgeTier::Tree => 3u32,
+                BadgeTier::Forest => 10u32,
+                BadgeTier::EarthGuardian => 25u32,
+                BadgeTier::None => 0u32,
+            };
+
+            client.vote_verify_project(&donor, &project_id, &true);
+
+            let proposal = client.get_proposal(&project_id);
+            prop_assert_eq!(proposal.votes_for, expected_weight);
+        }
+
         // ═══════════════════════════════════════════════════════════════════
         // INVARIANT 16: deactivate_all_projects flips ALL projects to inactive
         // ═══════════════════════════════════════════════════════════════════
@@ -752,7 +827,7 @@ mod fuzz {
         fn prop_usdc_amount_near_max(usdc_amount in (i128::MAX / 8 + 1)..=i128::MAX) {
             let (env, client, project_id, usdc_token) = setup_usdc(100u32);
             let donor = Address::generate(&env);
-            fund_usdc(&env, &usdc_token, &donor, &usdc_amount);
+            fund_usdc(&env, &usdc_token, &donor, usdc_amount);
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 client.donate_usdc(&usdc_token, &donor, &project_id, &usdc_amount, &MSG_HASH);
@@ -798,7 +873,7 @@ mod fuzz {
             client.deactivate_project(&admin, &project_id);
 
             let donor = Address::generate(&env);
-            fund_usdc(&env, &usdc_token, &donor, &amount);
+            fund_usdc(&env, &usdc_token, &donor, amount);
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 client.donate_usdc(&usdc_token, &donor, &project_id, &amount, &MSG_HASH);
@@ -816,7 +891,7 @@ mod fuzz {
         ) {
             let (env, client, project_id, usdc_token) = setup_usdc(u32::MAX);
             let donor = Address::generate(&env);
-            fund_usdc(&env, &usdc_token, &donor, &usdc_amount);
+            fund_usdc(&env, &usdc_token, &donor, usdc_amount);
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 client.donate_usdc(&usdc_token, &donor, &project_id, &usdc_amount, &MSG_HASH);
