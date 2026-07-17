@@ -24,6 +24,7 @@ import { recordDonation } from "@/lib/api";
 import useOnlineStatus from "@/hooks/useOnlineStatus";
 import { queueDonation, syncQueuedDonations } from "@/lib/offlineDonationQueue";
 import { formatXLM, formatCO2 } from "@/utils/format";
+import { safeRandomUUID } from "@/utils/uuid";
 import type { ClimateProject } from "@/utils/types";
 
 interface DonateFormProps {
@@ -225,7 +226,7 @@ export default function DonateForm({
 
     // Generate a unique idempotency key so the backend can safely deduplicate
     // retried donation-recording requests within 24 hours.
-    const idempotencyKey = crypto.randomUUID();
+    const idempotencyKey = safeRandomUUID();
 
     if (!isOnline) {
       await queueDonation({
