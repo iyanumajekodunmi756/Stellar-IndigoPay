@@ -459,6 +459,9 @@ fn apply_campaign_goal_progress(project: &mut Project) -> bool {
         true
     } else {
         false
+    }
+}
+
 fn voting_weight_from_badge(badge: &BadgeTier) -> u32 {
     match badge {
         BadgeTier::None => 0,
@@ -768,8 +771,7 @@ impl IndigoPayContract {
         goal: i128,
         deadline_ledger: u32,
     ) {
-        admin.require_auth();
-        require_admin(&env, &admin);
+        require_admin_for_routine(&env, &admin);
         require_not_paused(&env);
         if goal <= 0 {
             panic!("Campaign goal must be positive");
@@ -811,8 +813,7 @@ impl IndigoPayContract {
 
     /// Admin-only: push an Active campaign's deadline further into the future.
     pub fn extend_campaign(env: Env, admin: Address, project_id: String, new_deadline: u32) {
-        admin.require_auth();
-        require_admin(&env, &admin);
+        require_admin_for_routine(&env, &admin);
         require_not_paused(&env);
 
         let mut project: Project = env
@@ -845,8 +846,7 @@ impl IndigoPayContract {
     /// Admin-only: end a campaign. Early close → `Closed`; past deadline
     /// without meeting the goal → `Expired`; closing after `GoalReached` → `Closed`.
     pub fn close_campaign(env: Env, admin: Address, project_id: String) {
-        admin.require_auth();
-        require_admin(&env, &admin);
+        require_admin_for_routine(&env, &admin);
         require_not_paused(&env);
 
         let mut project: Project = env
