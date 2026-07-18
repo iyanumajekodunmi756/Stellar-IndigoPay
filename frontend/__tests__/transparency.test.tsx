@@ -13,19 +13,37 @@ import StatCard from "@/components/StatCard";
 import SLOStatusPanel from "@/components/SLOStatusPanel";
 import type { SLOData } from "@/lib/transparencyHooks";
 
-// ── Mock fetch globally ───────────────────────────────────────────────────
-const mockFetch = jest.fn();
-global.fetch = mockFetch;
+// ── jsdom polyfills ────────────────────────────────────────────────────────
+// jsdom does not implement AbortSignal.timeout(), which HealthBanner uses
+// for the readiness fetch call. Polyfill it so the mock fetch is reached.
+const ORIGINAL_ABORT_TIMEOUT = AbortSignal.timeout;
+beforeAll(() => {
+  AbortSignal.timeout = (_ms: number) => {
+    const controller = new AbortController();
+    return controller.signal;
+  };
+});
+afterAll(() => {
+  AbortSignal.timeout = ORIGINAL_ABORT_TIMEOUT;
+});
+
+// ── Mock fetch globally (follow adminAuth.test.ts pattern) ────────────────
+
+const ORIGINAL_FETCH = global.fetch;
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  global.fetch = jest.fn();
+});
+
+afterAll(() => {
+  global.fetch = ORIGINAL_FETCH;
 });
 
 // ── HealthBanner Tests ────────────────────────────────────────────────────
 
 describe("HealthBanner", () => {
-  it('shows "All Systems Operational" when readyz returns 200 and all checks OK', async () => {
-    mockFetch.mockResolvedValueOnce({
+  it('shows "All Systems Operational" when readyz returns 200 with all checks OK', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({
         status: "ready",
@@ -39,14 +57,13 @@ describe("HealthBanner", () => {
 
     render(<HealthBanner />);
 
-    // Wait for the fetch to resolve and state to update
     await screen.findByText(/All Systems Operational/i);
     expect(screen.getByRole("status")).toBeInTheDocument();
     expect(screen.getByText(/🟢/)).toBeInTheDocument();
   });
 
-  it('shows "Degraded Performance" when some subsystems are degraded', async () => {
-    mockFetch.mockResolvedValueOnce({
+  it('shows "Service Disruption" when subsystems are unreachable', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
       json: async () => ({
         status: "not ready",
@@ -66,7 +83,7 @@ describe("HealthBanner", () => {
   });
 
   it('shows "Service Disruption" when fetch fails', async () => {
-    mockFetch.mockRejectedValueOnce(new Error("Network error"));
+    (global.fetch as jest.Mock).mockRejectedValue(new Error("Network error"));
 
     render(<HealthBanner />);
 
@@ -74,14 +91,16 @@ describe("HealthBanner", () => {
     expect(screen.getByText(/🔴/)).toBeInTheDocument();
   });
 
-  it("shows loading skeleton initially", () => {
-    // Don't resolve the fetch so it stays in loading state
-    mockFetch.mockImplementationOnce(() => new Promise(() => {}));
+  it("shows loading skeleton initially before fetch resolves", async () => {
+    // Return a promise that never resolves so the component stays in loading state
+    (global.fetch as jest.Mock).mockImplementation(() => new Promise(() => {}));
 
-    render(<HealthBanner />);
+    const { container } = render(<HealthBanner />);
 
-    // Should show skeleton (checking for the container with bg-slate-50)
-    expect(screen.getByText(/Checking status/i)).toBeInTheDocument();
+    // The initial render shows a skeleton (animated pulse box) before the fetch resolves
+    const skeletonBox = container.querySelector(".animate-pulse");
+    expect(skeletonBox).toBeInTheDocument();
+    expect(skeletonBox).toHaveClass("rounded");
   });
 });
 
@@ -176,7 +195,7 @@ describe("SLOStatusPanel", () => {
     const { container } = render(<SLOStatusPanel sloData={null} isLoading={true} />);
 
     // Skeleton should render a card container with animated pulse elements
-    const skeletonCard = container.querySelector('.card');
+    const skeletonCard = container.querySelector(".card");
     expect(skeletonCard).toBeInTheDocument();
   });
 
@@ -206,9 +225,6 @@ describe("SLOStatusPanel", () => {
 
 describe("Transparency Page Integration (Recent Donations)", () => {
   it("renders waiting state when no donations", () => {
-    // We test the inline RecentDonationsFeed by rendering the full page
-    // with zero donations. Since the full page has complex deps (fetch,
-    // socket), we verify the loading indicator is present.
     render(
       <div>
         <p className="text-[#94A3B8] dark:text-[#64748B] text-sm font-body">
