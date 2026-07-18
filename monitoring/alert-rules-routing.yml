@@ -43,6 +43,34 @@ groups:
             we can restore from the last 24h of WAL archives on top of
             a base backup.
 
+      - alert: PostgresFailoverInitiated
+        expr: increase(indigopay_postgres_failover_total{outcome="initiated"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          routing: pagerduty
+        annotations:
+          summary: "Postgres automatic failover has been initiated"
+          description: |
+            The automated failover pipeline detected that the primary Postgres
+            instance is unhealthy and has started promoting the standby.
+            Verify the failover Job: kubectl get jobs -n stellar-indigopay -l app=postgres-failover
+            If failover fails, execute manual procedure: docs/restore-runbook.md
+
+      - alert: PostgresFailoverFailed
+        expr: increase(indigopay_postgres_failover_total{outcome="failed"}[10m]) > 0
+        for: 1m
+        labels:
+          severity: page
+          routing: pagerduty
+        annotations:
+          summary: "Postgres automatic failover FAILED — manual intervention required"
+          description: |
+            The automated failover Job failed to promote the standby.
+            Immediate manual failover is required.
+            Runbook: docs/restore-runbook.md
+            Check failover Job logs: kubectl logs -n stellar-indigopay -l app=postgres-failover
+
       - alert: RestoreDrillFailed
         # Set by the .github/workflows/restore-drill.yml workflow via
         # a Pushgateway push. Resolves when the next drill passes.

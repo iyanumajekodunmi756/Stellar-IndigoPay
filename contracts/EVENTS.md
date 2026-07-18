@@ -159,43 +159,33 @@ This document lists all events emitted by the Stellar IndigoPay Soroban smart co
 
 ---
 
-## 9. `camp_crt`
+## 16. `rfnd_rq`
 
-**Description**: Emitted when the admin creates a time-bound fundraising campaign on a project.
+**Description**: Emitted when a donor requests a refund within the 24-hour cooldown window.
 
-| Event Name | Topics                              | Data                                       | When Emitted                |
-| ---------- | ----------------------------------- | ------------------------------------------ | --------------------------- |
-| `camp_crt` | `["camp_crt", admin, project_id]`   | `{ "goal": i128, "deadline_ledger": u32 }` | On `create_campaign`        |
-
----
-
-## 10. `camp_ext`
-
-**Description**: Emitted when the admin extends an active campaign deadline.
-
-| Event Name | Topics                              | Data                      | When Emitted         |
-| ---------- | ----------------------------------- | ------------------------- | -------------------- |
-| `camp_ext` | `["camp_ext", admin, project_id]`   | `{ "new_deadline": u32 }` | On `extend_campaign` |
+| Event Name  | Topics                              | Data                                                            | When Emitted                          |
+| ----------- | ----------------------------------- | --------------------------------------------------------------- | ------------------------------------- |
+| `rfnd_rq`   | `["rfnd_rq", refund_id, donor]`    | `(project_id: String, amount: i128, donation_record_index: u32)` | When donor calls `request_refund` |
 
 ---
 
-## 11. `camp_cls`
+## 17. `rfnd_ap`
 
-**Description**: Emitted when the admin closes a campaign (`Closed` or `Expired`).
+**Description**: Emitted when an admin + project wallet approve a refund. The token transfer happens atomically.
 
-| Event Name | Topics                            | Data                         | When Emitted        |
-| ---------- | --------------------------------- | ---------------------------- | ------------------- |
-| `camp_cls` | `["camp_cls", admin, project_id]` | `{ "status": CampaignStatus }` | On `close_campaign` |
+| Event Name  | Topics                              | Data                                                    | When Emitted                          |
+| ----------- | ----------------------------------- | ------------------------------------------------------- | ------------------------------------- |
+| `rfnd_ap`   | `["rfnd_ap", refund_id, admin]`    | `(project_id: String, amount: i128, donor: Address)`    | When admin calls `approve_refund`     |
 
 ---
 
-## 12. `camp_goal`
+## 18. `rfnd_rj`
 
-**Description**: Emitted when a donation causes the campaign goal to be reached.
+**Description**: Emitted when an admin rejects a refund request. The donation stands; no counters are adjusted.
 
-| Event Name  | Topics                         | Data                      | When Emitted                         |
-| ----------- | ------------------------------ | ------------------------- | ------------------------------------ |
-| `camp_goal` | `["camp_goal", project_id]`    | `{ "total_raised": i128 }` | When `total_raised >= goal` on donate |
+| Event Name  | Topics                              | Data                                        | When Emitted                          |
+| ----------- | ----------------------------------- | ------------------------------------------- | ------------------------------------- |
+| `rfnd_rj`   | `["rfnd_rj", refund_id, admin]`    | `(project_id: String, donor: Address)`       | When admin calls `reject_refund`      |
 
 ---
 
