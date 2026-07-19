@@ -1,30 +1,42 @@
-jest.mock('../../src/db/pool', () => ({
+jest.mock("../../src/db/pool", () => ({
   query: jest.fn(),
   connect: jest.fn(),
 }));
 
-jest.mock('../../src/logger', () => ({
+jest.mock("../../src/logger", () => ({
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
   debug: jest.fn(),
 }));
 
-jest.mock('../../src/services/indexerDLQWorker', () => ({
+jest.mock("../../src/services/stellar", () => ({
+  server: {
+    ledgers: jest.fn(() => ({
+      order: jest.fn(() => ({
+        limit: jest.fn(() => ({
+          call: jest.fn().mockResolvedValue({ records: [{ sequence: 110 }] }),
+        })),
+      })),
+    })),
+  },
+}));
+
+jest.mock("../../src/services/indexerDLQWorker", () => ({
   enqueue: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../../src/services/indexerBackfill', () => ({
+jest.mock("../../src/services/indexerBackfill", () => ({
   runBackfill: jest.fn(),
 }));
 
-jest.mock('../../src/services/indexerDonationHandler', () => ({
+jest.mock("../../src/services/indexerDonationHandler", () => ({
   handleDonation: jest.fn().mockResolvedValue(true),
   setUsdcToXlmRate: jest.fn(),
 }));
 
-jest.mock('../../src/services/metrics', () => ({
-  registry: {},
+jest.mock("../../src/services/metrics", () => ({
+  registry: { registerMetric: jest.fn() },
   metrics: {
     indigopayIndexerStreamReconnectsTotal: { inc: jest.fn() },
     indexerOperationsSkippedTotal: { inc: jest.fn() },
@@ -33,40 +45,69 @@ jest.mock('../../src/services/metrics', () => ({
   },
 }));
 
-const pool = require('../../src/db/pool');
-const { runLagCheck, setLagRuntimeState, getLagRuntimeState, resetLagRuntimeState } = require('../../src/services/indexerService');
+const pool = require("../../src/db/pool");
+const { runBackfill } = require("../../src/services/indexerBackfill");
+const { metrics } = require("../../src/services/metrics");
+const {
+  runLagCheck,
+  setLagRuntimeState,
+  getLagRuntimeState,
+  resetLagRuntimeState,
+  stop,
+} = require("../../src/services/indexerService");
 
-describe('indexer lag detection', () => {
+describe("indexer lag detection", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    pool.query.mockResolvedValue({
+      rows: [{ last_processed_ledger: 100 }],
+    });
+    runBackfill.mockReset();
     resetLagRuntimeState();
     setLagRuntimeState({
-      currentCursorLedger: 100,
-      latestLedger: 110,
-      lastCheckedAt: Date.now(),
-      backoffMs: 1000,
+      backoffMs: 30_000,
       lastBackfillOutcome: null,
     });
   });
 
-  it('calculates lag and triggers a backfill when threshold is exceeded', async () => {
-    const backfill = require('../../src/services/indexerBackfill');
-    backfill.runBackfill = jest.fn().mockResolvedValue({ processed: 2, errors: 0 });
+  afterEach(async () => {
+    await stop();
+  });
+
+  it("calculates lag and triggers a backfill when the threshold is exceeded", async () => {
+    runBackfill.mockResolvedValue({ processed: 2, errors: 0 });
 
     const result = await runLagCheck();
 
-    expect(result.lag).toBe(10);
-    expect(result.triggeredBackfill).toBe(true);
-    expect(backfill.runBackfill).toHaveBeenCalled();
+    expect(result).toEqual({
+      lag: 10,
+      triggeredBackfill: true,
+      outcome: "success",
+    });
+    expect(runBackfill).toHaveBeenCalledWith({
+      fromLedger: 101,
+      toLedger: 110,
+    });
+    expect(metrics.indigopayIndexerLagLedgers.set).toHaveBeenCalledWith(10);
+    expect(getLagRuntimeState().lastProcessedLedger).toBe(100);
   });
 
-  it('doubles backoff after a failed backfill', async () => {
-    const backfill = require('../../src/services/indexerBackfill');
-    backfill.runBackfill = jest.fn().mockRejectedValue(new Error('boom'));
+  it("increases the backoff after a failed backfill", async () => {
+    runBackfill.mockRejectedValue(new Error("boom"));
 
-    await runLagCheck();
-    const stateAfterFailure = getLagRuntimeState();
+    const result = await runLagCheck();
 
-    expect(stateAfterFailure.backoffMs).toBe(2000);
+    expect(result).toEqual({
+      lag: 10,
+      triggeredBackfill: true,
+      outcome: "failed",
+    });
+    expect(getLagRuntimeState()).toMatchObject({
+      backoffMs: 60_000,
+      lastBackfillOutcome: "failed",
+    });
+    expect(metrics.indigopayIndexerAutoBackfillsTotal.inc).toHaveBeenCalledWith({
+      outcome: "failed",
+    });
   });
 });

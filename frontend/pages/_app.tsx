@@ -10,7 +10,6 @@ import { ThemeProvider } from "@/lib/theme";
 import { I18nProvider } from "@/lib/i18n";
 import { PriceProvider } from "@/lib/priceContext";
 import { WalletProvider } from "@/lib/WalletProvider";
-import InstallPrompt from "@/components/InstallPrompt";
 import { ErrorBoundary } from "@/lib/ErrorBoundary";
 import useOnlineStatus from "@/hooks/useOnlineStatus";
 import ConnectivityBanner from "@/components/ConnectivityBanner";
@@ -84,7 +83,6 @@ export default function App({ Component, pageProps }: AppProps) {
               </Head>
               <ConnectivityBanner isOnline={isOnline} />
               <SkipToContent />
-              <InstallPrompt />
               <main id="main-content" tabIndex={-1}>
                 <OfflineFallback isOnline={isOnline} />
                 {/* `initial={false}` prevents the entrance animation on the

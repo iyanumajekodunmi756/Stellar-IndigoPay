@@ -285,21 +285,31 @@ function scheduleReconnect(reason) {
 }
 
 async function checkLag() {
+  const checkResult = {
+    lag: currentLag,
+    triggeredBackfill: false,
+    outcome: null,
+  };
+
   try {
     const cursor = await readCursor();
     const ledgerRoot = await stellarServer.ledgers().order("desc").limit(1).call();
     const latestLedger = ledgerRoot?.records?.[0]?.sequence || cursor;
     const lag = Math.max(0, latestLedger - cursor);
+    lastProcessedLedger = Math.max(lastProcessedLedger, cursor);
     currentLag = lag;
+    checkResult.lag = lag;
     lastLagCheckAt = Date.now();
     indexerLagLedgers.set(lag);
 
     if (lag >= Number(process.env.INDEXER_LAG_BACKFILL_THRESHOLD || 10)) {
+      checkResult.triggeredBackfill = true;
       try {
         const result = await runBackfill({ fromLedger: cursor + 1, toLedger: latestLedger });
         const outcome = result.errors > 0 ? "partial" : "success";
         indexerAutoBackfillsTotal.inc({ outcome });
         lastBackfillOutcome = outcome;
+        checkResult.outcome = outcome;
         lagBackoffMs = Math.max(lagCheckIntervalMs, 1000);
         logger.warn(
           { event: "indexer_auto_backfill_triggered", lag, fromLedger: cursor + 1, toLedger: latestLedger, outcome },
@@ -308,6 +318,7 @@ async function checkLag() {
       } catch (err) {
         indexerAutoBackfillsTotal.inc({ outcome: "failed" });
         lastBackfillOutcome = "failed";
+        checkResult.outcome = "failed";
         lagBackoffMs = Math.min(Math.max(lagBackoffMs * 2, lagCheckIntervalMs), maxLagBackoffMs);
         logger.error(
           { event: "indexer_auto_backfill_failed", lag, err: err.message },
@@ -318,10 +329,12 @@ async function checkLag() {
       lagBackoffMs = Math.max(lagCheckIntervalMs, 1000);
     }
   } catch (err) {
+    checkResult.error = err.message;
     logger.error({ event: "indexer_lag_check_error", err: err.message }, "Lag check failed");
   }
 
   startLagMonitor();
+  return checkResult;
 }
 
 function startLagMonitor() {
@@ -397,7 +410,6 @@ async function startIndexer(socketIo) {
     projectWalletsInterval.unref();
 
   lagBackoffMs = Number(process.env.INDEXER_LAG_CHECK_INTERVAL_MS || 30_000);
-  startLagMonitor();
   await checkLag();
 
   logger.info(
