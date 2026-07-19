@@ -196,6 +196,7 @@ CREATE TABLE IF NOT EXISTS project_ratings (
 -- donation_matches: matching offer contracts. A matcher pledges to multiply
 -- donations up to cap_xlm by multiplier (e.g. 2×). matched_xlm tracks the
 -- total matched so far; expires_at ends the offer period.
+-- status lifecycle: active → expired (time-based) | exhausted (cap reached) | cancelled (admin).
 CREATE TABLE IF NOT EXISTS donation_matches (
   id UUID PRIMARY KEY,
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -206,6 +207,15 @@ CREATE TABLE IF NOT EXISTS donation_matches (
   matched_xlm NUMERIC(20, 7) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Add status column to support lifecycle management (active / expired / exhausted / cancelled).
+-- The matchExpiry background service flips active pools to expired or exhausted automatically.
+ALTER TABLE donation_matches ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE donation_matches DROP CONSTRAINT IF EXISTS donation_matches_status_check;
+ALTER TABLE donation_matches ADD CONSTRAINT donation_matches_status_check
+  CHECK (status IN ('active', 'expired', 'exhausted', 'cancelled'));
+CREATE INDEX IF NOT EXISTS idx_donation_matches_status
+  ON donation_matches (status, project_id);
 
 
 -- idempotency_keys: stores response snapshots keyed by Idempotency-Key

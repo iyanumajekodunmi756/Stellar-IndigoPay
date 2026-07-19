@@ -171,7 +171,9 @@ async function recordDonation(req, res, next) {
       const matchesResult = await client.query(
         `SELECT id, matcher_address, cap_xlm, matched_xlm, multiplier
          FROM donation_matches
-         WHERE project_id = $1 AND expires_at > NOW()`,
+         WHERE project_id = $1
+           AND status = 'active'
+           AND expires_at > NOW()`,
         [projectId],
       );
 

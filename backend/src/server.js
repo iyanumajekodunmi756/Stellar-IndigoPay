@@ -266,6 +266,7 @@ const routeMounts = [
   "notifications",
   "verification",
   "oracle",
+  "matches",
 ];
 
 for (const name of routeMounts) {
@@ -439,6 +440,22 @@ async function startServer() {
   await startIdempotencyCleanup();
   await startBlacklistCleanup();
   await startCO2VerificationCron();
+
+  // Match expiry: deactivates pools that have expired (time-based) or been
+  // exhausted (cap reached). Runs every 15 minutes.
+  try {
+    const matchExpiry = require("./services/matchExpiry");
+    matchExpiry.start();
+    lifecycle.onShutdown(async () => {
+      try { matchExpiry.stop(); } catch { /* ignore */ }
+    });
+    logger.info({ event: "match_expiry_scheduled" }, "Match expiry service scheduled");
+  } catch (err) {
+    logger.error(
+      { event: "match_expiry_startup_error", err: err.message },
+      "Match expiry service could not be started",
+    );
+  }
 
   // Retention worker: a dedicated pg-boss instance schedules the config-driven
   // data-retention policies. Kept separate from the request queues so a
