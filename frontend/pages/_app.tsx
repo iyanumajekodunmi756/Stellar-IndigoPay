@@ -1,7 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { AppProps } from "next/app";
 import Head from "next/head";
+import { useRouter } from "next/router";
+import { AnimatePresence } from "framer-motion";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import SkipToContent from "@/components/SkipToContent";
+import PageTransition from "@/components/PageTransition";
+import CookieConsent from "@/components/CookieConsent";
 import { ThemeTiedToaster } from "@/components/ThemeTiedToaster";
 import { ThemeProvider } from "@/lib/theme";
 import { I18nProvider } from "@/lib/i18n";
@@ -14,6 +19,7 @@ import OfflineFallback from "@/components/OfflineFallback";
 import InstallPrompt from "@/components/InstallPrompt";
 import { syncQueuedDonations } from "@/lib/offlineDonationQueue";
 import { recordDonation } from "@/lib/api";
+import { initAnalytics, trackEvent } from "@/lib/analytics";
 import "@/styles/globals.css";
 
 // ThemeTiedToaster keeps the sonner toast palette in sync with the
@@ -24,7 +30,36 @@ import "@/styles/globals.css";
 // SkipToContent lives at the very top so it is the first focusable
 // element on the page (satisfies WCAG 2.4.1 Bypass Blocks).
 export default function App({ Component, pageProps }: AppProps) {
+  const router = useRouter();
   const isOnline = useOnlineStatus();
+
+  // Create QueryClient once per session so cache survives page navigations.
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000, // 30s default
+            retry: 2,
+            refetchOnWindowFocus: true,
+          },
+        },
+      }),
+  );
+
+  useEffect(() => {
+    initAnalytics();
+  }, []);
+
+  useEffect(() => {
+    const handleRouteChange = (url: string) => {
+      trackEvent("page_viewed", { url });
+    };
+    router.events.on("routeChangeComplete", handleRouteChange);
+    return () => {
+      router.events.off("routeChangeComplete", handleRouteChange);
+    };
+  }, [router.events]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -57,13 +92,13 @@ export default function App({ Component, pageProps }: AppProps) {
       window.removeEventListener("online", handleOnlineSync);
     };
   }, []);
-
   return (
     <ErrorBoundary>
-      <ThemeProvider>
-        <I18nProvider>
-          <PriceProvider>
-            <WalletProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider>
+          <I18nProvider>
+            <PriceProvider>
+              <WalletProvider>
               <Head>
                 <title>
                   Stellar-IndigoPay — Fund the planet. One XLM at a time.
@@ -81,14 +116,26 @@ export default function App({ Component, pageProps }: AppProps) {
               <SkipToContent />
               <main id="main-content" tabIndex={-1}>
                 <OfflineFallback isOnline={isOnline} />
-                <Component {...pageProps} />
+                {/* `initial={false}` prevents the entrance animation on the
+                    first SSR paint; `mode="wait"` lets the outgoing page
+                    finish exiting before the incoming one mounts, which keeps
+                    route changes smooth for both forward and back/forward
+                    navigations. Keying by `router.asPath` (including the
+                    query string) ensures dynamic routes animate too. */}
+                <AnimatePresence mode="wait" initial={false}>
+                  <PageTransition key={router.asPath}>
+                    <Component {...pageProps} />
+                  </PageTransition>
+                </AnimatePresence>
               </main>
+              <CookieConsent />
               <InstallPrompt />
               <ThemeTiedToaster />
-            </WalletProvider>
-          </PriceProvider>
-        </I18nProvider>
-      </ThemeProvider>
+              </WalletProvider>
+            </PriceProvider>
+          </I18nProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

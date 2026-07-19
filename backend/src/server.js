@@ -59,19 +59,21 @@ const { AppError } = require("./errors");
 const { startTurretsServer } = require("./services/turrets");
 const { start: startSummaryQueue } = require("./services/summaryQueue");
 const { start: startProfileQueue } = require("./services/profileQueue");
-const {
-  start: startWebhookQueue,
+const { start: startWebhookQueue,
   stop: stopWebhookQueue,
 } = require("./services/webhookQueue");
 const { start: startPushQueue } = require("./services/pushQueue");
 const { start: startIdempotencyCleanup } = require("./services/idempotencyCleanup");
 const { start: startBlacklistCleanup } = require("./services/blacklistCleanup");
+const { startCO2VerificationCron, stopCO2VerificationCron } = require("./services/co2Verifier");
 const { startIndexer } = require("./services/indexerService");
 const { startReconciler, stopReconciler } = require("./services/indexerReconciler");
 const { startDLQWorker, stopDLQWorker } = require("./services/indexerDLQWorker");
 const { stop: stopSorobanEvents } = require("./services/sorobanEventService");
 const lifecycle = require("./services/lifecycle");
 const guardianService = require("./services/guardian");
+const recurringKeeper = require("./services/recurringKeeper");
+
 
 
 Sentry.init({
@@ -267,6 +269,7 @@ const routeMounts = [
   "verification",
   "oracle",
   "map",
+  "matches",
 ];
 
 for (const name of routeMounts) {
@@ -439,6 +442,59 @@ async function startServer() {
   await startPushQueue();
   await startIdempotencyCleanup();
   await startBlacklistCleanup();
+  await startCO2VerificationCron();
+
+  // Match expiry: deactivates pools that have expired (time-based) or been
+  // exhausted (cap reached). Runs every 15 minutes.
+  try {
+    const matchExpiry = require("./services/matchExpiry");
+    matchExpiry.start();
+    lifecycle.onShutdown(async () => {
+      try { matchExpiry.stop(); } catch { /* ignore */ }
+    });
+    logger.info({ event: "match_expiry_scheduled" }, "Match expiry service scheduled");
+  } catch (err) {
+    logger.error(
+      { event: "match_expiry_startup_error", err: err.message },
+      "Match expiry service could not be started",
+    );
+  }
+
+  // Retention worker: a dedicated pg-boss instance schedules the config-driven
+  // data-retention policies. Kept separate from the request queues so a
+  // retention failure can never interfere with donation/delivery processing.
+  try {
+    const PgBoss = require("pg-boss");
+    const { registerRetentionWorker } = require("./services/retentionWorker");
+    const retentionBoss = new PgBoss(
+      process.env.DATABASE_URL ||
+        "postgres://postgres:postgres@localhost:5432/indigopay",
+    );
+    retentionBoss.on("error", (err) =>
+      logger.error(
+        { event: "retention_boss_error", err: err.message },
+        "retention pg-boss error",
+      ),
+    );
+    await retentionBoss.start();
+    await registerRetentionWorker(retentionBoss);
+    lifecycle.onShutdown(async () => {
+      try {
+        await retentionBoss.stop();
+      } catch {
+        // ignore
+      }
+    });
+    logger.info(
+      { event: "retention_worker_started" },
+      "Retention worker scheduled",
+    );
+  } catch (err) {
+    logger.error(
+      { event: "retention_startup_error", err: err.message },
+      "Retention worker could not be started",
+    );
+  }
 
   // digestQueue is optional in some deployments
   try {
@@ -479,6 +535,16 @@ async function startServer() {
     );
   }
 
+  try {
+    recurringKeeper.start();
+    logger.info({ event: "recurring_keeper_started" }, "Recurring keeper service started");
+  } catch (err) {
+    logger.error(
+      { event: "recurring_keeper_startup_error", err: err.message },
+      "Recurring keeper service failed to start",
+    );
+  }
+
   // The Stellar Horizon stream in the indexer holds the event loop open.
   // Register a shutdown hook so the stream is closed cleanly on SIGTERM.
   lifecycle.onShutdown(async () => {
@@ -496,6 +562,11 @@ async function startServer() {
     }
     try {
       if (typeof guardianService.stop === "function") guardianService.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      if (typeof recurringKeeper.stop === "function") await recurringKeeper.stop();
     } catch {
       // ignore
     }
@@ -526,7 +597,7 @@ async function startServer() {
       const sorobanEvents = require("./services/sorobanEventService");
       if (typeof sorobanEvents.stop === "function") await sorobanEvents.stop();
     } catch {
-      // Service may already be stopped; swallow.
+      // Service may already be stopped or not loaded; swallow.
     }
   });
 
@@ -541,6 +612,7 @@ async function startServer() {
     "./services/pushQueue",
     "./services/idempotencyCleanup",
     "./services/blacklistCleanup",
+    "./services/co2Verifier",
   ]) {
     lifecycle.onShutdown(async () => {
       try {
@@ -551,6 +623,15 @@ async function startServer() {
       }
     });
   }
+
+  // CO2 verification cron: stop the pg-boss instance gracefully.
+  lifecycle.onShutdown(async () => {
+    try {
+      if (typeof stopCO2VerificationCron === "function") await stopCO2VerificationCron();
+    } catch {
+      // Module may not be loaded; swallow.
+    }
+  });
 
   // Socket.IO: stop accepting new connections, wait for in-flight, then close.
   lifecycle.onShutdown(async () => {

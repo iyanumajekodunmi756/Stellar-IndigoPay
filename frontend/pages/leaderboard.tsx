@@ -1,15 +1,20 @@
 /**
  * pages/leaderboard.tsx — Top donors ranked by total XLM given
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/router";
 import LeaderboardTable from "@/components/LeaderboardTable";
+import LeaderboardSkeleton from "@/components/LeaderboardSkeleton";
 import Link from "next/link";
 import PageMeta from "@/components/PageMeta";
+import { trackEvent } from "@/lib/analytics";
 
 type Period = "all" | "month" | "year";
 
 export default function LeaderboardPage() {
+  useEffect(() => {
+    trackEvent("leaderboard_viewed");
+  }, []);
   const router = useRouter();
   const period = (router.query.period as Period) || "all";
 
@@ -21,6 +26,17 @@ export default function LeaderboardPage() {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://stellar-indigopay.app";
   const canonicalUrl = `${appUrl}${router.asPath.split("?")[0]}`;
+
+  // While the route (and therefore the selected period) is still resolving,
+  // show the full page skeleton to avoid a layout shift before the table
+  // fetches its own data.
+  if (!router.isReady) {
+    return (
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10 animate-fade-in">
+        <LeaderboardSkeleton />
+      </div>
+    );
+  }
   const leaderboardJsonLd = {
     "@context": "https://schema.org",
     "@type": "WebPage",
