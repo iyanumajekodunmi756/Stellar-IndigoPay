@@ -22,6 +22,12 @@
   - Cache-Control: `public, max-age=..., stale-while-revalidate=...` headers on cached responses
   - Graceful degradation when Redis is unavailable (pass-through to database, logged warning)
   - 18 unit tests covering cache hit/miss, coalescing, invalidation, Redis failure, hash determinism
+* **contracts:** add a multi-source TWAP price oracle with freshness protection (closes #281)
+  - Authorised reporters submit timestamped positive prices to a 20-entry circular buffer
+  - `get_price` averages the newest 10 observations and preserves the IndigoPay oracle interface
+  - Prices older than 720 ledgers use an admin-configured fallback or fail clearly when none exists
+  - Added reporter management, overflow protection, events, and comprehensive oracle tests
+
 * **frontend:** implement advanced keyboard navigation, global keyboard shortcuts, route focus management, and skip links
   - Add `frontend/hooks/useShortcuts.ts` — custom keyboard shortcuts hook with modifier checking and input field exclusion
   - Add `frontend/components/GlobalSearchModal.tsx` — search overlay modal accessible via Cmd+K / Ctrl+K with full keyboard navigation (arrows, Enter, Escape) and focus trap
