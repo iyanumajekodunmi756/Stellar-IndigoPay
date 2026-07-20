@@ -5979,8 +5979,10 @@ mod tests {
         client.set_native_token(&admin, &native_token);
 
         let native_client = StellarAssetClient::new(&env, &native_token);
-        native_client.mint(&donor, &(1500 * STROOP));
-        native_client.approve(&donor, &client.address, &(1500 * STROOP), &9999u32);
+        // 500 XLM × 3 executions = 1 500 XLM donation + 1 XLM × 3 = 3 XLM keeper
+        // incentives = 1 503 XLM total to cover all transfer_from calls.
+        native_client.mint(&donor, &(1503 * STROOP));
+        native_client.approve(&donor, &client.address, &(1503 * STROOP), &9999u32);
 
         // 500 XLM intervals
         let recurring_id = client.create_recurring(
