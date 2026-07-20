@@ -14,6 +14,7 @@ jobs:
   frontend-lint:
     name: Frontend Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,6 +37,7 @@ jobs:
   frontend-typecheck:
     name: Frontend TypeScript
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,6 +57,7 @@ jobs:
   frontend-tests-smoke:
     name: Frontend jest smoke (jest-axe resolves)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -77,6 +80,7 @@ jobs:
   frontend-tests:
     name: Frontend Unit + Accessibility Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [frontend-tests-smoke]
     steps:
       - name: Checkout code
@@ -97,6 +101,7 @@ jobs:
   frontend-e2e:
     name: Frontend End-to-End Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -142,6 +147,7 @@ jobs:
   frontend-build:
     name: Frontend Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [frontend-lint, frontend-typecheck, frontend-tests, frontend-e2e]
     steps:
       - name: Checkout code
@@ -205,6 +211,7 @@ jobs:
   storybook:
     name: Storybook Build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
