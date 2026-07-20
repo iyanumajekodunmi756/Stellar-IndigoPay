@@ -178,25 +178,36 @@ jobs:
         working-directory: frontend
         run: |
           echo "Checking first-load JS bundle sizes…"
-          # Check all JS chunks (pages/ routes + shared chunks) and flag any that exceed 250KB
+          # Check route-specific page chunks only (exclude framework bundles like
+          # _app, _document, and _error which contain shared runtime code).
           MAX_SIZE=256000
           EXCEEDED=0
-          if [ -d .next/static/chunks ]; then
-            for chunk in .next/static/chunks/*.js .next/static/chunks/pages/*.js 2>/dev/null; do
-              if [ -f "$chunk" ]; then
-                SIZE=$(stat -c%s "$chunk" 2>/dev/null || echo 0)
-                if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-                  echo "::warning file=$chunk::Chunk $(basename "$chunk") is $SIZE bytes (exceeds ${MAX_SIZE} byte budget)"
-                  EXCEEDED=$((EXCEEDED + 1))
-                fi
-              fi
-            done
-          fi
+          shopt -s nullglob globstar
+          for chunk in .next/static/chunks/pages/*.js; do
+            NAME=$(basename "$chunk")
+            # Skip framework/app bundles — not individual routes
+            case "$NAME" in
+              _app-*.js|_document-*.js|_error-*.js) continue ;;
+            esac
+            SIZE=$(stat -c%s "$chunk" 2>/dev/null || echo 0)
+            if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+              echo "::warning file=$chunk::Route chunk $NAME is $SIZE bytes (exceeds ${MAX_SIZE} byte budget)"
+              EXCEEDED=$((EXCEEDED + 1))
+            fi
+          done
+          # Also check nested route directories (e.g., pages/projects/[id].js)
+          for chunk in .next/static/chunks/pages/**/*.js; do
+            SIZE=$(stat -c%s "$chunk" 2>/dev/null || echo 0)
+            if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+              echo "::warning file=$chunk::Route chunk $(basename "$chunk") is $SIZE bytes (exceeds ${MAX_SIZE} byte budget)"
+              EXCEEDED=$((EXCEEDED + 1))
+            fi
+          done
           if [ "$EXCEEDED" -gt 0 ]; then
-            echo "::error title=Bundle size budget exceeded::${EXCEEDED} chunk(s) exceed the 250KB first-load JS budget"
+            echo "::error title=Bundle size budget exceeded::${EXCEEDED} route chunk(s) exceed the 250KB first-load JS budget"
             exit 1
           fi
-          echo "All chunks within 250KB budget."
+          echo "All route chunks within 250KB budget."
 
   storybook:
     name: Storybook Build
