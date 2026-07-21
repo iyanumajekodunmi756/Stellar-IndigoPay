@@ -251,6 +251,10 @@
 
 # Changelog
 
+## Unreleased
+
+- Added SEP-0007 deep-link support for mobile donations via `web+stellar:pay` URIs, including confirmation, biometric auth, callback handling, and scan-history logging.
+
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
