@@ -34,6 +34,9 @@ use soroban_sdk::{
     Env, String, Symbol, Vec,
 };
 
+#[cfg(feature = "zk")]
+use soroban_sdk::Bytes;
+
 // ─── Oracle interface ─────────────────────────────────────────────────────────
 
 /// External price oracle interface.
@@ -256,6 +259,26 @@ pub struct RecurringDonation {
     pub created_at: u32,
 }
 
+/// A time-locked vesting schedule for gradual donation release.
+/// Donors can specify that a donation should be released to the project
+/// in equal installments over a configurable number of ledgers, rather
+/// than all at once. The first installment is transferred immediately;
+/// subsequent installments are claimable after each interval elapses.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct VestingSchedule {
+    pub donor: Address,
+    pub project_id: String,
+    pub total_amount: i128,
+    pub amount_per_installment: i128,
+    pub installment_count: u32,
+    pub interval_ledgers: u32,
+    pub next_installment_ledger: u32,
+    pub installments_released: u32,
+    pub created_at: u32,
+    pub token: Address,
+}
+
 #[contracttype]
 pub enum DataKey {
     // Multi-sig admin set: Vec<Address> of authorized admin addresses.
@@ -360,6 +383,12 @@ pub enum DataKey {
     VoteDelegation(Address),
     DelegatedWeight(Address),
     NativeTokenAddress,
+    // zk-SNARK anonymous donation (#390)
+    ZkVerificationKey,
+    Nullifier(BytesN<32>),
+    // Time-locked donation vesting (#386)
+    VestingSchedule(Address, u32),
+    DonorVestingCount(Address),
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1481,6 +1510,290 @@ impl IndigoPayContract {
         );
         ensure_min_ttl(&env, VOTING_WINDOW_LEDGERS * 4);
         ensure_min_ttl(&env, VOTING_WINDOW_LEDGERS * 4);
+    }
+
+    // ─── zk-SNARK Anonymous Donations (#390) ─────────────────────────────────
+
+    /// Admin-only: set the Groth16 verification key for anonymous donations.
+    /// The verification key is a serialized Groth16 vk for the donation circuit.
+    /// Only one key may be active at a time; calling this again overwrites it.
+    #[cfg(feature = "zk")]
+    pub fn set_zk_verification_key(env: Env, admin: Address, vk: Bytes) {
+        require_admin_for_routine(&env, &admin);
+        require_not_paused(&env);
+        if vk.is_empty() {
+            panic!("Verification key must not be empty");
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::ZkVerificationKey, &vk);
+        env.events()
+            .publish((symbol_short!("zk_vk_set"), admin), vk.len() as u32);
+        ensure_min_ttl(&env, VOTING_WINDOW_LEDGERS * 4);
+    }
+
+    /// Query the current Groth16 verification key, if set.
+    #[cfg(feature = "zk")]
+    pub fn get_zk_verification_key(env: Env) -> Option<Bytes> {
+        env.storage().instance().get(&DataKey::ZkVerificationKey)
+    }
+
+    /// Anonymous donation via zk-SNARK proof verification.
+    ///
+    /// A donor generates a Groth16 proof off-chain proving they have sufficient
+    /// tokens and a valid project/amount/nullifier tuple. The contract verifies
+    /// the proof on-chain and records the donation under a derived anonymous
+    /// donor address (sha256 of the nullifier).
+    ///
+    /// # Prerequisites
+    /// - Admin must have set the verification key via `set_zk_verification_key`.
+    /// - The donor must transfer tokens to the contract address BEFORE calling
+    ///   this function (in the same atomic transaction) so the contract can
+    ///   forward them to the project wallet.
+    /// - Each nullifier must be globally unique across all anonymous donations.
+    ///
+    /// # Parameters
+    /// - `token`: The Stellar asset contract address for the donation currency.
+    /// - `proof`: The serialized Groth16 proof bytes.
+    /// - `project_id`: The project receiving the donation.
+    /// - `amount`: Donation amount in token's smallest unit (stroops).
+    /// - `nullifier`: Unique 32-byte value preventing double-spend of the proof.
+    /// - `msg_hash`: 4-byte message hash bound to the proof circuit.
+    ///
+    /// # Panics
+    /// - If the verification key has not been set.
+    /// - If the nullifier has already been used.
+    /// - If the Groth16 proof fails verification.
+    /// - If the project is not found, inactive, or paused.
+    /// - If the amount is not positive.
+    #[cfg(feature = "zk")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn donate_anonymous(
+        env: Env,
+        token: Address,
+        proof: Bytes,
+        project_id: String,
+        amount: i128,
+        nullifier: BytesN<32>,
+        msg_hash: u32,
+    ) {
+        require_not_paused(&env);
+        if amount <= 0 {
+            panic!("Donation amount must be positive");
+        }
+
+        let nullifier_key = DataKey::Nullifier(nullifier.clone());
+        if env.storage().instance().has(&nullifier_key) {
+            panic!("Nullifier already spent");
+        }
+
+        // Load and verify the Groth16 proof against the admin-set vk.
+        let vk: Bytes = env
+            .storage()
+            .instance()
+            .get(&DataKey::ZkVerificationKey)
+            .expect("Verification key not set — admin must call set_zk_verification_key first");
+
+        // Construct public inputs: [amount (i128 LE), msg_hash (u32 LE),
+        // project_id hash, nullifier hash]. The circuit MUST match this layout.
+        // We pack them into a single Bytes blob for groth16_verify.
+        let project_id_hash = env.crypto().sha256(&project_id.clone().into());
+
+        let mut public_inputs = Bytes::new(&env);
+        public_inputs.append(&amount.to_be_bytes().as_slice().into());
+        public_inputs.append(&msg_hash.to_be_bytes().as_slice().into());
+        public_inputs.append(&project_id_hash.into());
+        public_inputs.append(&Bytes::from_slice(&env, nullifier.as_ref()));
+
+        if !env.crypto().groth16_verify(&vk, &proof, &public_inputs) {
+            panic!("Anonymous donation proof verification failed");
+        }
+
+        // Derive the anonymous donor address from the nullifier.
+        // Address::from_bytes takes raw bytes — we use sha256 of the nullifier
+        // to produce a deterministic 32-byte anonymous address.
+        let nullifier_hash = env
+            .crypto()
+            .sha256(&Bytes::from_slice(&env, nullifier.as_ref()));
+        let anon_donor = Address::from_bytes(&nullifier_hash.to_bytes().as_ref().into());
+
+        // ── Checks ───────────────────────────────────────────────────────────
+
+        let mut project: Project = env
+            .storage()
+            .instance()
+            .get(&DataKey::Project(project_id.clone()))
+            .expect("Project not found");
+        if !project.active {
+            panic!("Project is not accepting donations");
+        }
+        if project.paused {
+            panic!("Project is temporarily paused");
+        }
+        require_campaign_accepts_donation(&project, env.ledger().sequence());
+
+        // Pre-compute CO2 increment.
+        let xlm_units = amount / STROOP;
+        let co2_increment = xlm_units
+            .checked_mul(project.co2_per_xlm as i128)
+            .expect("CO2 calculation overflow");
+
+        let mut donor_stats: DonorStats = env
+            .storage()
+            .instance()
+            .get(&DataKey::DonorStats(anon_donor.clone()))
+            .unwrap_or(DonorStats {
+                total_donated: 0,
+                donation_count: 0,
+                badge: BadgeTier::None,
+                co2_offset_grams: 0,
+            });
+        let prev_badge = donor_stats.badge.clone();
+
+        // ── Effects (Checks-Effects-Interactions) ────────────────────────────
+
+        // Mark nullifier as spent AFTER all checks pass, as part of the
+        // Effects step. Prevents griefing where a valid proof for a
+        // deactivated project permanently consumes the nullifier.
+        env.storage().instance().set(&nullifier_key, &true);
+
+        project.total_raised = project
+            .total_raised
+            .checked_add(amount)
+            .expect("Project total_raised overflow");
+        let goal_reached = apply_campaign_goal_progress(&mut project);
+        let donated_key = DataKey::HasDonated(project_id.clone(), anon_donor.clone());
+        if !env.storage().instance().has(&donated_key) {
+            env.storage().instance().set(&donated_key, &true);
+            project.donor_count = project
+                .donor_count
+                .checked_add(1)
+                .expect("Project donor_count overflow");
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::Project(project_id.clone()), &project);
+        if goal_reached {
+            env.events().publish(
+                (symbol_short!("camp_goal"), project_id.clone()),
+                project.total_raised,
+            );
+        }
+
+        donor_stats.total_donated = donor_stats
+            .total_donated
+            .checked_add(amount)
+            .expect("Donor total_donated overflow");
+        donor_stats.donation_count = donor_stats
+            .donation_count
+            .checked_add(1)
+            .expect("Donor donation_count overflow");
+        donor_stats.co2_offset_grams = donor_stats
+            .co2_offset_grams
+            .checked_add(co2_increment)
+            .expect("Donor co2_offset overflow");
+        donor_stats.badge = calculate_badge(donor_stats.total_donated);
+        #[cfg(feature = "delegation")]
+        update_delegated_weight_if_needed(&env, &anon_donor, &prev_badge, &donor_stats.badge);
+        env.storage()
+            .instance()
+            .set(&DataKey::DonorStats(anon_donor.clone()), &donor_stats);
+
+        // Track per-project cumulative donations for milestone NFT eligibility.
+        let proj_total_key = DataKey::DonorProjectTotal(project_id.clone(), anon_donor.clone());
+        let prev_proj_total: i128 = env.storage().instance().get(&proj_total_key).unwrap_or(0);
+        env.storage().instance().set(
+            &proj_total_key,
+            &prev_proj_total
+                .checked_add(amount)
+                .expect("DonorProjectTotal overflow"),
+        );
+
+        // Auto-mint an Impact NFT when the anonymous donor reaches a new badge tier.
+        if donor_stats.badge != BadgeTier::None && donor_stats.badge != prev_badge {
+            let nft_key = DataKey::ImpactNFT(anon_donor.clone(), donor_stats.badge.clone());
+            if !env.storage().instance().has(&nft_key) {
+                let nft = ImpactNFT {
+                    owner: anon_donor.clone(),
+                    tier: donor_stats.badge.clone(),
+                    total_donated: donor_stats.total_donated,
+                    minted_at_ledger: env.ledger().sequence(),
+                };
+                env.storage().instance().set(&nft_key, &nft);
+                env.events().publish(
+                    (symbol_short!("nft_mint"), anon_donor.clone()),
+                    donor_stats.badge.clone(),
+                );
+            }
+        }
+
+        let dc: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DonationCount)
+            .unwrap_or(0);
+        let new_dc = dc.checked_add(1).expect("DonationCount overflow");
+        env.storage()
+            .instance()
+            .set(&DataKey::DonationCount, &new_dc);
+        // Store donation record under the anonymous donor address.
+        let donation_record = DonationRecord {
+            donor: anon_donor.clone(),
+            project: project_id.clone(),
+            amount,
+            ledger: env.ledger().sequence(),
+            message_hash: msg_hash,
+            currency: symbol_short!("XLM"),
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::DonationRecord(dc), &donation_record);
+        env.storage()
+            .instance()
+            .set(&DataKey::DonationCO2Offset(dc), &co2_increment);
+
+        let gr: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::GlobalTotalRaised)
+            .unwrap_or(0);
+        let new_gr = gr.checked_add(amount).expect("GlobalTotalRaised overflow");
+        env.storage()
+            .instance()
+            .set(&DataKey::GlobalTotalRaised, &new_gr);
+
+        let gc: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::GlobalCO2OffsetGrams)
+            .unwrap_or(0);
+        let new_gc = gc.checked_add(co2_increment).expect("GlobalCO2 overflow");
+        env.storage()
+            .instance()
+            .set(&DataKey::GlobalCO2OffsetGrams, &new_gc);
+
+        // ── Interaction: transfer tokens from contract to project wallet.
+        //    The donor must have transferred tokens to the contract in the same
+        //    atomic transaction (before this call) so the contract holds a
+        //    sufficient balance.
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &project.wallet, &amount);
+
+        env.events().publish(
+            (
+                symbol_short!("anon_don"),
+                anon_donor.clone(),
+                project_id.clone(),
+            ),
+            (amount, donor_stats.badge.clone(), msg_hash),
+        );
+        ensure_min_ttl(&env, VOTING_WINDOW_LEDGERS * 4);
+    }
+
+    /// Check if a nullifier has already been spent.
+    #[cfg(feature = "zk")]
+    pub fn is_nullifier_spent(env: Env, nullifier: BytesN<32>) -> bool {
+        env.storage().instance().has(&DataKey::Nullifier(nullifier))
     }
 
     // ─── Getters ─────────────────────────────────────────────────────────────
@@ -3448,6 +3761,243 @@ impl IndigoPayContract {
             }
         }
         list
+    }
+
+    // ─── Time-Locked Vesting Donations (#386) ────────────────────────────────
+
+    /// Creates a time-locked vesting schedule for a donation.
+    ///
+    /// The total amount is split into equal installments. The first installment
+    /// is transferred to the project wallet immediately; subsequent installments
+    /// are claimable by anyone via `claim_vested_installment` after each
+    /// `interval_ledgers` elapses.
+    ///
+    /// # Panics
+    /// - If `amount <= 0`
+    /// - If `installment_count == 0`
+    /// - If `interval_ledgers == 0`
+    /// - If the project is not found, inactive, or paused
+    /// - If the token transfer fails
+    #[cfg(feature = "vesting")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn donate_vested(
+        env: Env,
+        token: Address,
+        donor: Address,
+        project_id: String,
+        total_amount: i128,
+        installment_count: u32,
+        installment_interval_ledgers: u32,
+        msg_hash: u32,
+    ) -> u32 {
+        donor.require_auth();
+        require_not_paused(&env);
+
+        if total_amount <= 0 {
+            panic!("Donation amount must be positive");
+        }
+        if installment_count == 0 {
+            panic!("Installment count must be positive");
+        }
+        if installment_interval_ledgers == 0 {
+            panic!("Installment interval must be positive");
+        }
+
+        // Verify project exists and is accepting donations.
+        let project: Project = env
+            .storage()
+            .instance()
+            .get(&DataKey::Project(project_id.clone()))
+            .expect("Project not found");
+        if !project.active {
+            panic!("Project is not accepting donations");
+        }
+        if project.paused {
+            panic!("Project is temporarily paused");
+        }
+
+        let amount_per_installment = total_amount
+            .checked_div(installment_count as i128)
+            .expect("Installment count must be positive (division by zero)");
+        if amount_per_installment == 0 {
+            panic!("Donation amount too small for installment count");
+        }
+
+        // Compute next installment ledger: current + interval.
+        let next_installment_ledger = env
+            .ledger()
+            .sequence()
+            .checked_add(installment_interval_ledgers)
+            .expect("next_installment_ledger overflow");
+
+        let count_key = DataKey::DonorVestingCount(donor.clone());
+        let count: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+        let schedule_id = count;
+        let next_count = count.checked_add(1).expect("DonorVestingCount overflow");
+        env.storage().instance().set(&count_key, &next_count);
+
+        let schedule = VestingSchedule {
+            donor: donor.clone(),
+            project_id: project_id.clone(),
+            total_amount,
+            amount_per_installment,
+            installment_count,
+            interval_ledgers: installment_interval_ledgers,
+            next_installment_ledger,
+            installments_released: 1, // first installment is immediate
+            created_at: env.ledger().sequence(),
+            token: token.clone(),
+        };
+
+        let schedule_key = DataKey::VestingSchedule(donor.clone(), schedule_id);
+        env.storage().instance().set(&schedule_key, &schedule);
+
+        // ── Transfer full amount from donor to contract (custody),
+        //    then release first installment from contract to project.
+        let contract_addr = env.current_contract_address();
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&donor, &contract_addr, &total_amount);
+        token_client.transfer(&contract_addr, &project.wallet, &amount_per_installment);
+
+        env.events().publish(
+            (symbol_short!("vest_crt"), donor, project_id),
+            (
+                schedule_id,
+                total_amount,
+                amount_per_installment,
+                installment_count,
+                installment_interval_ledgers,
+                msg_hash,
+            ),
+        );
+
+        ensure_min_ttl(&env, VOTING_WINDOW_LEDGERS * 4);
+
+        schedule_id
+    }
+
+    /// Claims the next vested installment for a project.
+    ///
+    /// Permissionless — anyone may call this after the interval has elapsed
+    /// since the last claim. The contract holds the vesting funds in custody
+    /// and transfers the installment to the project wallet.
+    ///
+    /// # Panics
+    /// - If the schedule is not found.
+    /// - If all installments have already been released.
+    /// - If the interval has not yet elapsed.
+    #[cfg(feature = "vesting")]
+    pub fn claim_vested_installment(env: Env, donor: Address, schedule_id: u32) {
+        require_not_paused(&env);
+
+        let schedule_key = DataKey::VestingSchedule(donor.clone(), schedule_id);
+        let mut schedule: VestingSchedule = env
+            .storage()
+            .instance()
+            .get(&schedule_key)
+            .expect("Vesting schedule not found");
+
+        if schedule.installments_released >= schedule.installment_count {
+            panic!("All installments already released");
+        }
+
+        let current_ledger = env.ledger().sequence();
+        if current_ledger < schedule.next_installment_ledger {
+            panic!("Next installment not yet claimable");
+        }
+
+        // Advance the schedule BEFORE the external token transfer (CEI pattern).
+        schedule.installments_released = schedule
+            .installments_released
+            .checked_add(1)
+            .expect("installments_released overflow");
+        schedule.next_installment_ledger = current_ledger
+            .checked_add(schedule.interval_ledgers)
+            .expect("next_installment_ledger overflow");
+        env.storage().instance().set(&schedule_key, &schedule);
+
+        // Load project to get the wallet.
+        let project: Project = env
+            .storage()
+            .instance()
+            .get(&DataKey::Project(schedule.project_id.clone()))
+            .expect("Project not found");
+
+        // ── Interaction: transfer installment from contract custody to project.
+        let contract_addr = env.current_contract_address();
+        let token_client = token::Client::new(&env, &schedule.token);
+        token_client.transfer(
+            &contract_addr,
+            &project.wallet,
+            &schedule.amount_per_installment,
+        );
+
+        let remaining = schedule
+            .installment_count
+            .saturating_sub(schedule.installments_released);
+        env.events().publish(
+            (symbol_short!("vest_clm"), schedule.project_id),
+            (schedule_id, schedule.amount_per_installment, remaining),
+        );
+
+        ensure_min_ttl(&env, VOTING_WINDOW_LEDGERS * 4);
+    }
+
+    /// Cancels a vesting schedule, returning unvested tokens to the donor.
+    ///
+    /// Only the original donor may cancel (enforced by the storage key which
+    /// includes the donor's address). All released installments stay with
+    /// the project; the unvested remainder is returned from contract custody
+    /// to the donor.
+    ///
+    /// # Panics
+    /// - If the schedule is not found.
+    /// - If all installments have already been released.
+    #[cfg(feature = "vesting")]
+    pub fn cancel_vesting(env: Env, donor: Address, schedule_id: u32) {
+        donor.require_auth();
+
+        let schedule_key = DataKey::VestingSchedule(donor.clone(), schedule_id);
+        let schedule: VestingSchedule = env
+            .storage()
+            .instance()
+            .get(&schedule_key)
+            .expect("Vesting schedule not found");
+
+        if schedule.installments_released >= schedule.installment_count {
+            panic!("All installments already released — nothing to cancel");
+        }
+
+        let remaining_count = schedule
+            .installment_count
+            .saturating_sub(schedule.installments_released);
+        let unvested_amount = (remaining_count as i128)
+            .checked_mul(schedule.amount_per_installment)
+            .expect("unvested amount overflow");
+
+        // Remove the schedule from storage.
+        env.storage().instance().remove(&schedule_key);
+
+        // ── Interaction: return unvested tokens from contract custody to donor.
+        let contract_addr = env.current_contract_address();
+        let token_client = token::Client::new(&env, &schedule.token);
+        token_client.transfer(&contract_addr, &donor, &unvested_amount);
+
+        env.events().publish(
+            (symbol_short!("vest_can"), donor, schedule.project_id),
+            (schedule_id, unvested_amount),
+        );
+
+        ensure_min_ttl(&env, VOTING_WINDOW_LEDGERS * 4);
+    }
+
+    /// Query a vesting schedule by donor and schedule ID.
+    #[cfg(feature = "vesting")]
+    pub fn get_vesting_schedule(env: Env, donor: Address, schedule_id: u32) -> VestingSchedule {
+        env.storage()
+            .instance()
+            .get(&DataKey::VestingSchedule(donor, schedule_id))
+            .expect("Vesting schedule not found")
     }
 
     pub fn set_native_token(env: Env, admin: Address, native_token: Address) {
@@ -6530,5 +7080,403 @@ mod tests {
             &50u32,
             &parent_id,
         );
+    }
+
+    // ─── zk-SNARK anonymous donation tests (#390) ────────────────────────────
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn test_anonymous_address_derivation_deterministic() {
+        let env = Env::default();
+        let nullifier = BytesN::from_array(&env, &[42u8; 32]);
+        let hash1 = env
+            .crypto()
+            .sha256(&Bytes::from_slice(&env, nullifier.as_ref()));
+        let addr1 = Address::from_bytes(&hash1.to_bytes().as_ref().into());
+        let hash2 = env
+            .crypto()
+            .sha256(&Bytes::from_slice(&env, nullifier.as_ref()));
+        let addr2 = Address::from_bytes(&hash2.to_bytes().as_ref().into());
+        assert_eq!(addr1, addr2);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn test_anonymous_address_derivation_different_nullifiers() {
+        let env = Env::default();
+        let n1 = BytesN::from_array(&env, &[1u8; 32]);
+        let n2 = BytesN::from_array(&env, &[2u8; 32]);
+        let h1 = env.crypto().sha256(&Bytes::from_slice(&env, n1.as_ref()));
+        let a1 = Address::from_bytes(&h1.to_bytes().as_ref().into());
+        let h2 = env.crypto().sha256(&Bytes::from_slice(&env, n2.as_ref()));
+        let a2 = Address::from_bytes(&h2.to_bytes().as_ref().into());
+        assert_ne!(a1, a2);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    #[should_panic(
+        expected = "Verification key not set — admin must call set_zk_verification_key first"
+    )]
+    fn test_anonymous_donation_no_verification_key() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+        let nullifier = BytesN::from_array(&env, &[5u8; 32]);
+        let token = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        let proof = Bytes::from_slice(&env, &[0u8; 256]);
+        let project_id = String::from_str(&env, "test");
+        client.donate_anonymous(
+            &token,
+            &proof,
+            &project_id,
+            &1_000_000i128,
+            &nullifier,
+            &1u32,
+        );
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn test_set_and_get_verification_key() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+        let vk = Bytes::from_slice(&env, &[0xAB; 128]);
+        client.set_zk_verification_key(&admin, &vk);
+        let stored = client.get_zk_verification_key();
+        assert!(stored.is_some());
+        assert_eq!(stored.unwrap(), vk);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn test_anonymous_donation_nullifier_not_spent_on_proof_failure() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+        let project_id = String::from_str(&env, "test-proj");
+        let project_wallet = Address::generate(&env);
+        client.register_project(
+            &admin,
+            &project_id,
+            &String::from_str(&env, "Test Project"),
+            &project_wallet,
+            &50u32,
+        );
+        let vk = Bytes::from_slice(&env, &[1u8; 64]);
+        client.set_zk_verification_key(&admin, &vk);
+        let nullifier = BytesN::from_array(&env, &[7u8; 32]);
+        let token = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        let bad_proof = Bytes::from_slice(&env, &[0xFFu8; 256]);
+        let result = client.try_donate_anonymous(
+            &token,
+            &bad_proof,
+            &project_id,
+            &5_000_000i128,
+            &nullifier,
+            &1u32,
+        );
+        assert!(result.is_err());
+        assert!(!client.is_nullifier_spent(&nullifier));
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    #[should_panic(expected = "Donation amount must be positive")]
+    fn test_anonymous_donation_zero_amount() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+        let project_id = String::from_str(&env, "test-proj");
+        let project_wallet = Address::generate(&env);
+        client.register_project(
+            &admin,
+            &project_id,
+            &String::from_str(&env, "Test"),
+            &project_wallet,
+            &50u32,
+        );
+        let vk = Bytes::from_slice(&env, &[1u8; 64]);
+        client.set_zk_verification_key(&admin, &vk);
+        let nullifier = BytesN::from_array(&env, &[8u8; 32]);
+        let token = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        let proof = Bytes::from_slice(&env, &[0u8; 256]);
+        client.donate_anonymous(&token, &proof, &project_id, &0i128, &nullifier, &1u32);
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    fn test_is_nullifier_spent_returns_false_initially() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+        let nullifier = BytesN::from_array(&env, &[9u8; 32]);
+        assert!(!client.is_nullifier_spent(&nullifier));
+    }
+
+    #[cfg(feature = "zk")]
+    #[test]
+    #[should_panic(expected = "Verification key must not be empty")]
+    fn test_set_zk_verification_key_rejects_empty() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+        let empty_vk = Bytes::new(&env);
+        client.set_zk_verification_key(&admin, &empty_vk);
+    }
+
+    // ─── Vesting schedule tests (#386) ───────────────────────────────────────
+
+    #[cfg(feature = "vesting")]
+    #[test]
+    fn test_vesting_create_and_first_claim() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+
+        let project_wallet = Address::generate(&env);
+        let pid = String::from_str(&env, "recycle-trees");
+        client.register_project(
+            &admin,
+            &pid,
+            &String::from_str(&env, "Recycle Trees"),
+            &project_wallet,
+            &100u32,
+        );
+
+        let donor = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let total: i128 = 100_000_000; // 10 XLM
+        StellarAssetClient::new(&env, &token).mint(&donor, &total);
+
+        // Create 10-installment vesting at 100 ledgers each.
+        let schedule_id =
+            client.donate_vested(&token, &donor, &pid, &total, &10u32, &100u32, &0u32);
+
+        let schedule = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(schedule.total_amount, total);
+        assert_eq!(schedule.amount_per_installment, 10_000_000); // 1 XLM
+        assert_eq!(schedule.installment_count, 10);
+        assert_eq!(schedule.installments_released, 1); // first installment immediate
+        assert_eq!(schedule.donor, donor);
+        assert_eq!(schedule.project_id, pid);
+
+        // Advance past the first interval.
+        env.ledger().set_sequence_number(200);
+
+        client.claim_vested_installment(&donor, &schedule_id);
+        let schedule2 = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(schedule2.installments_released, 2);
+    }
+
+    #[cfg(feature = "vesting")]
+    #[test]
+    fn test_vesting_multiple_claims() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+
+        let project_wallet = Address::generate(&env);
+        let pid = String::from_str(&env, "ocean-cleanup");
+        client.register_project(
+            &admin,
+            &pid,
+            &String::from_str(&env, "Ocean Cleanup"),
+            &project_wallet,
+            &50u32,
+        );
+
+        let donor = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let total: i128 = 50_000_000; // 5 XLM
+        StellarAssetClient::new(&env, &token).mint(&donor, &total);
+
+        // 5 installments, 50 ledgers each.
+        let schedule_id = client.donate_vested(&token, &donor, &pid, &total, &5u32, &50u32, &0u32);
+
+        let s0 = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(s0.installments_released, 1);
+
+        // Claim 2nd installment.
+        env.ledger().set_sequence_number(100);
+        client.claim_vested_installment(&donor, &schedule_id);
+        let s2 = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(s2.installments_released, 2);
+
+        // Claim 3rd installment.
+        env.ledger().set_sequence_number(200);
+        client.claim_vested_installment(&donor, &schedule_id);
+        let s3 = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(s3.installments_released, 3);
+
+        // Claim remaining.
+        env.ledger().set_sequence_number(300);
+        client.claim_vested_installment(&donor, &schedule_id);
+        env.ledger().set_sequence_number(400);
+        client.claim_vested_installment(&donor, &schedule_id);
+        let s5 = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(s5.installments_released, 5);
+    }
+
+    #[cfg(feature = "vesting")]
+    #[test]
+    fn test_vesting_cancel_returns_unvested() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+
+        let project_wallet = Address::generate(&env);
+        let pid = String::from_str(&env, "solar-farms");
+        client.register_project(
+            &admin,
+            &pid,
+            &String::from_str(&env, "Solar Farms"),
+            &project_wallet,
+            &100u32,
+        );
+
+        let donor = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let total: i128 = 100_000_000; // 10 XLM, 10 installments of 1 XLM each
+        StellarAssetClient::new(&env, &token).mint(&donor, &total);
+
+        let schedule_id =
+            client.donate_vested(&token, &donor, &pid, &total, &10u32, &720u32, &0u32);
+
+        // Advance through 5 installments.
+        env.ledger().set_sequence_number(1000);
+        client.claim_vested_installment(&donor, &schedule_id);
+        env.ledger().set_sequence_number(2000);
+        client.claim_vested_installment(&donor, &schedule_id);
+        env.ledger().set_sequence_number(3000);
+        client.claim_vested_installment(&donor, &schedule_id);
+        env.ledger().set_sequence_number(4000);
+        client.claim_vested_installment(&donor, &schedule_id);
+
+        let s_mid = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(s_mid.installments_released, 5);
+
+        // Cancel vesting — remaining 50 XLM returned.
+        client.cancel_vesting(&donor, &schedule_id);
+    }
+
+    #[cfg(feature = "vesting")]
+    #[test]
+    #[should_panic(expected = "Next installment not yet claimable")]
+    fn test_vesting_claim_before_interval_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+
+        let project_wallet = Address::generate(&env);
+        let pid = String::from_str(&env, "wind-power");
+        client.register_project(
+            &admin,
+            &pid,
+            &String::from_str(&env, "Wind Power"),
+            &project_wallet,
+            &50u32,
+        );
+
+        let donor = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let total: i128 = 30_000_000;
+        StellarAssetClient::new(&env, &token).mint(&donor, &total);
+
+        // 3 installments, 1000 ledgers each.
+        let schedule_id =
+            client.donate_vested(&token, &donor, &pid, &total, &3u32, &1000u32, &0u32);
+
+        let s0 = client.get_vesting_schedule(&donor, &schedule_id);
+        assert_eq!(s0.installments_released, 1);
+
+        // Try to claim immediately — should fail, interval hasn't elapsed.
+        client.claim_vested_installment(&donor, &schedule_id);
+    }
+
+    #[cfg(feature = "vesting")]
+    #[test]
+    #[should_panic(expected = "Vesting schedule not found")]
+    fn test_vesting_cancel_by_non_donor_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, IndigoPayContract);
+        let client = IndigoPayContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&signers1(&env, &admin), &1u32);
+
+        let project_wallet = Address::generate(&env);
+        let pid = String::from_str(&env, "forest-regrow");
+        client.register_project(
+            &admin,
+            &pid,
+            &String::from_str(&env, "Forest Regrow"),
+            &project_wallet,
+            &100u32,
+        );
+
+        let donor = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = env
+            .register_stellar_asset_contract_v2(token_admin)
+            .address();
+        let total: i128 = 100_000_000;
+        StellarAssetClient::new(&env, &token).mint(&donor, &total);
+
+        let schedule_id =
+            client.donate_vested(&token, &donor, &pid, &total, &10u32, &720u32, &0u32);
+
+        // Another address tries to cancel.
+        let impostor = Address::generate(&env);
+        client.cancel_vesting(&impostor, &schedule_id);
     }
 }
