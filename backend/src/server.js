@@ -475,15 +475,6 @@ async function startServer() {
     await stopDLQWorker();
   });
 
-  // Soroban event service: stop the polling loop and persist the cursor.
-  lifecycle.onShutdown(async () => {
-    try {
-      await stopSorobanEvents();
-    } catch {
-      // Service may already be stopped; swallow.
-    }
-  });
-
   // pg-boss queues: each one exposes a `stop()` method that drains in-flight
   // jobs. We register one hook per queue so a failure in one doesn't stop
   // the others from draining.
