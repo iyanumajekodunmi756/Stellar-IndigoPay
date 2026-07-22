@@ -1664,8 +1664,7 @@ export default function ProjectDetail({ ogProject }: ProjectDetailProps) {
                   {
                     id: `${d.id}`,
                     title: "New donation received",
-                    description: `${d.anonymous || !d.donorAddress ? "Anonymous" : shortenAddress(d.donorAddress)} just donated ${formatXLM(d.amountXLM || d.amount || "0")}`,
-                    description: `${shortenAddress(d.donorAddress || "")} just donated ${formatXLM(d.amountXLM || d.amount || "0")}`,
+        description: `${d.anonymous || !d.donorAddress ? "Anonymous" : shortenAddress(d.donorAddress)} just donated ${formatXLM(d.amountXLM || d.amount || "0")}`,
                     createdAt: Date.now(),
                   },
                 ]);
