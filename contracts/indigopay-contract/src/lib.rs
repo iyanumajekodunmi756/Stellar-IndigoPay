@@ -2897,7 +2897,6 @@ impl IndigoPayContract {
     }
 
     /// Donate USDC. Converts to XLM-equivalent for global stats using a price oracle stub.
-    #[cfg(feature = "usdc")]
     /// Backward-compatible USDC entrypoint.
     #[cfg(feature = "usdc")]
     pub fn donate_usdc(
