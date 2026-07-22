@@ -18,6 +18,7 @@ const {
 const { createRateLimiter } = require("../middleware/rateLimiter");
 const { sendAppError } = require("../errors");
 const { buildAuditFilters } = require("./admin/audit-export");
+const { enqueueDigest } = require("../services/digestQueue");
 
 const loginLimiter = createRateLimiter(10, 15);
 
@@ -234,6 +235,29 @@ router.post("/sessions/:id/revoke", adminRequired, async (req, res, next) => {
   }
 });
 
+router.post("/digest/trigger", adminRequired, async (req, res, next) => {
+  try {
+    const { type } = req.body || {};
+    const allowedTypes = new Set(["daily", "weekly"]);
+
+    if (type !== undefined && !allowedTypes.has(type)) {
+      return sendAppError(res, "VALIDATION_ERROR", {
+        field: "type",
+        detail: "type must be either daily or weekly",
+      });
+    }
+
+    const requestedTypes = type ? [type] : ["daily", "weekly"];
+    for (const digestType of requestedTypes) {
+      await enqueueDigest(digestType);
+    }
+
+    res.json({ success: true, data: { triggered: requestedTypes } });
+  } catch (e) {
+    next(e);
+  }
+});
+
 /**
  * Return the authenticated admin identity.
  *
@@ -330,9 +354,13 @@ router.use("/audit-log", require("./admin/audit-export"));
 router.use("/audit-log", require("./admin/audit-stats"));
 
 router.use("/queues", require("./admin/queues"));
+router.use("/co2", require("./admin/co2"));
 router.use("/documents", require("./admin/documents"));
 router.use("/webhooks", require("./admin/webhooks"));
 router.use("/indexer", require("./admin/indexer"));
 router.use("/secret-rotations", require("./admin/secretRotations"));
+router.use("/metrics", require("./admin/metrics"));
+router.use("/failover-metric", require("./admin/failoverMetric"));
+router.use("/matches", require("./admin/matches"));
 
 module.exports = router;

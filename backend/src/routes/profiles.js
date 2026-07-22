@@ -8,11 +8,13 @@ const { z } = require("zod");
 const pool = require("../db/pool");
 const { mapProfileRow } = require("../services/store");
 const { createRateLimiter } = require("../middleware/rateLimiter");
+const { invalidateCache } = require("../middleware/cache");
 const { validate } = require("../middleware/validate");
-const { stellarAddress } = require("../validators/schemas");
+const { stellarAddress, profileSchema } = require("../validators/schemas");
 const {
   sanitizedStringField,
   validateBody,
+  stripHtml,
 } = require("../middleware/validation");
 const { AppError } = require("../errors");
 
@@ -24,18 +26,8 @@ function validateKey(k) {
 
 const profilePostLimiter = createRateLimiter(20, 1);
 
-const profileSchema = z.object({
-  publicKey: z.string().min(1, "publicKey is required"),
-  displayName: sanitizedStringField({
-    required: false,
-    maxLength: 30,
-    message: "must not contain HTML",
-  }).optional(),
-  bio: sanitizedStringField({
-    required: false,
-    maxLength: 300,
-    message: "must not contain HTML",
-  }).optional(),
+const profileBodySchema = profileSchema.extend({
+  publicKey: stellarAddress,
 });
 
 router.get(
@@ -83,13 +75,13 @@ router.get(
 router.post(
   "/",
   profilePostLimiter,
-  validateBody(profileSchema),
+  validateBody(profileBodySchema),
   async (req, res, next) => {
     try {
       const { publicKey, displayName, bio } = req.body;
       validateKey(publicKey);
       const trimmedDisplayName = displayName?.trim().slice(0, 30) || null;
-      const trimmedBio = bio?.trim().slice(0, 300) || null;
+      const trimmedBio = bio ? stripHtml(bio).trim().slice(0, 300) : null;
 
       const result = await pool.query(
         `INSERT INTO profiles (
@@ -103,6 +95,8 @@ router.post(
       RETURNING *`,
         [publicKey, trimmedDisplayName, trimmedBio],
       );
+
+      invalidateCache("cache:v1:leaderboard:*");
 
       res.json({ success: true, data: mapProfileRow(result.rows[0]) });
     } catch (e) {
