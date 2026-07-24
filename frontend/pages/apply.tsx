@@ -28,7 +28,10 @@ import {
 } from "@/lib/api";
 import FormField from "@/components/FormField";
 import { useFormValidation } from "@/hooks/useFormValidation";
-import { verificationRequestSchema } from "@/lib/validation/schemas";
+import {
+  verificationRequestSchema,
+  type VerificationRequestFormData,
+} from "@/lib/validation/schemas";
 import { z } from "zod";
 
 type Step = "org" | "project" | "impact" | "documents" | "review" | "done";
@@ -64,7 +67,11 @@ export default function ApplyPage() {
   const [reviewTimeline, setReviewTimeline] = useState("5–10 business days");
   const orgStepSchema = z.object({
     organizationName: z.string().min(1, "required"),
-    organizationWebsite: z.string().url("invalidUrl").optional().or(z.literal("")),
+    organizationWebsite: z
+      .string()
+      .url("invalidUrl")
+      .optional()
+      .or(z.literal("")),
     organizationCountry: z.string().optional(),
     contactEmail: z.string().email("invalidEmail"),
     walletAddress: z.string().regex(/^G[A-Z2-7]{55}$/, "invalidWallet"),
@@ -85,16 +92,19 @@ export default function ApplyPage() {
         const n = Number(val);
         return val !== "" && Number.isFinite(n) && n >= 0;
       },
-      { message: "invalidCO2" }
+      { message: "invalidCO2" },
     ),
-    expectedAnnualTonnesCO2: z.string().refine(
-      (val) => {
-        if (val === "") return true;
-        const n = Number(val);
-        return Number.isFinite(n) && n >= 0;
-      },
-      { message: "invalidCO2" }
-    ).optional(),
+    expectedAnnualTonnesCO2: z
+      .string()
+      .refine(
+        (val) => {
+          if (val === "") return true;
+          const n = Number(val);
+          return Number.isFinite(n) && n >= 0;
+        },
+        { message: "invalidCO2" },
+      )
+      .optional(),
     notes: z.string().optional(),
   });
 
@@ -111,31 +121,31 @@ export default function ApplyPage() {
           ? impactValidation
           : null;
 
-  const fieldErrors = (currentValidation ? currentValidation.errors : {}) as Record<string, string | undefined>;
+  const fieldErrors = (
+    currentValidation ? currentValidation.errors : {}
+  ) as Record<string, string | undefined>;
 
   const [documents, setDocuments] = useState<VerificationDocument[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const {
-    register,
-    handleSubmit,
-    trigger,
-    getValues,
-    formState: { errors },
-  } = useForm<VerificationRequestFormData>({
-    resolver: zodResolver(verificationRequestSchema),
-    defaultValues: {
-      projectCategory: PROJECT_CATEGORIES[0],
-      organizationWebsite: "",
-      organizationCountry: "",
-      projectDescription: "",
-      expectedAnnualTonnesCO2: "",
-      notes: "",
-    },
-    mode: "onTouched",
-  });
+  type FormData = any;
+  const [form, setForm] = useState<any>({});
+
+  const { register, handleSubmit, getValues } =
+    useForm<VerificationRequestFormData>({
+      resolver: zodResolver(verificationRequestSchema) as any,
+      defaultValues: {
+        projectCategory: PROJECT_CATEGORIES[0],
+        organizationWebsite: "",
+        organizationCountry: "",
+        projectDescription: "",
+        expectedAnnualTonnesCO2: "",
+        notes: "",
+      },
+      mode: "onTouched",
+    });
 
   const set =
     (field: keyof FormData) =>
@@ -144,7 +154,7 @@ export default function ApplyPage() {
         HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
       >,
     ) => {
-      setForm((prev) => ({ ...prev, [field]: e.target.value }));
+      setForm((prev: any) => ({ ...prev, [field]: e.target.value }));
       orgValidation.clearField(field as any);
       projectValidation.clearField(field as any);
       impactValidation.clearField(field as any);
@@ -178,8 +188,11 @@ export default function ApplyPage() {
     return true;
   }
 
-    const idx = STEPS.indexOf(step);
-    if (idx < STEPS.length - 2) setStep(STEPS[idx + 1]);
+  function validateAndNext() {
+    if (validateStep()) {
+      const idx = STEPS.indexOf(step);
+      if (idx < STEPS.length - 2) setStep(STEPS[idx + 1]);
+    }
   }
 
   function prevStep() {
@@ -288,7 +301,6 @@ export default function ApplyPage() {
       <p className="text-[#475569] dark:text-[#94A3B8] font-body mb-8 text-sm">
         {T("pageIntro")}
       </p>
-
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-10">
         {progressSteps.map((s, i) => (
@@ -321,7 +333,10 @@ export default function ApplyPage() {
           </div>
         ))}
       </div>
-      <div className="card p-6 space-y-5">
+      <form
+        onSubmit={handleSubmit(onSubmit as any)}
+        className="card p-6 space-y-5"
+      >
         {/* Step: org */}
         {step === "org" && (
           <>
@@ -331,51 +346,66 @@ export default function ApplyPage() {
             <FormField
               name="organizationName"
               label={`${T("orgName")} *`}
-              error={fieldErrors.organizationName ? T(fieldErrors.organizationName) : undefined}
+              error={
+                fieldErrors.organizationName
+                  ? T(fieldErrors.organizationName)
+                  : undefined
+              }
             >
               <input
                 className="input-field"
+                {...register("organizationName")}
                 value={form.organizationName}
                 onChange={set("organizationName")}
                 placeholder="Acme Climate Foundation"
-                {...register("organizationName")}
               />
             </FormField>
             <FormField
               name="organizationWebsite"
               label={T("orgWebsite")}
-              error={fieldErrors.organizationWebsite ? T(fieldErrors.organizationWebsite) : undefined}
+              error={
+                fieldErrors.organizationWebsite
+                  ? T(fieldErrors.organizationWebsite)
+                  : undefined
+              }
             >
               <input
                 className="input-field"
+                {...register("organizationWebsite")}
                 value={form.organizationWebsite}
                 onChange={set("organizationWebsite")}
                 placeholder="https://acme.org"
-                {...register("organizationWebsite")}
               />
             </FormField>
             <FormField
               name="organizationCountry"
               label={T("orgCountry")}
-              error={fieldErrors.organizationCountry ? T(fieldErrors.organizationCountry) : undefined}
+              error={
+                fieldErrors.organizationCountry
+                  ? T(fieldErrors.organizationCountry)
+                  : undefined
+              }
             >
               <input
                 className="input-field"
+                {...register("organizationCountry")}
                 value={form.organizationCountry}
                 onChange={set("organizationCountry")}
                 placeholder="Kenya"
-                {...register("organizationCountry")}
               />
             </FormField>
             <FormField
               name="contactEmail"
               label={`${T("contactEmail")} *`}
-              error={fieldErrors.contactEmail ? T(fieldErrors.contactEmail) : undefined}
+              error={
+                fieldErrors.contactEmail
+                  ? T(fieldErrors.contactEmail)
+                  : undefined
+              }
             >
               <input
                 className="input-field"
                 type="email"
-                error={errors.contactEmail?.message}
                 placeholder="hello@acme.org"
                 {...register("contactEmail")}
               />
@@ -384,16 +414,19 @@ export default function ApplyPage() {
               name="walletAddress"
               label={`${T("walletAddress")} *`}
               helper={T("walletHelper")}
-              error={fieldErrors.walletAddress ? T(fieldErrors.walletAddress) : undefined}
+              error={
+                fieldErrors.walletAddress
+                  ? T(fieldErrors.walletAddress)
+                  : undefined
+              }
             >
               <input
                 className="input-field font-mono text-sm"
                 spellCheck={false}
+                {...register("walletAddress")}
                 value={form.walletAddress}
                 onChange={set("walletAddress")}
                 placeholder="GABC…"
-                spellCheck={false}
-                {...register("walletAddress")}
               />
             </FormField>
           </>
@@ -408,23 +441,30 @@ export default function ApplyPage() {
             <FormField
               name="projectName"
               label={`${T("projectName")} *`}
-              error={fieldErrors.projectName ? T(fieldErrors.projectName) : undefined}
+              error={
+                fieldErrors.projectName ? T(fieldErrors.projectName) : undefined
+              }
             >
               <input
                 className="input-field"
+                {...register("projectName")}
                 value={form.projectName}
                 onChange={set("projectName")}
                 placeholder="Acme Solar Farm Phase 1"
-                {...register("projectName")}
               />
             </FormField>
             <FormField
               name="projectCategory"
               label={`${T("projectCategory")} *`}
-              error={fieldErrors.projectCategory ? T(fieldErrors.projectCategory) : undefined}
+              error={
+                fieldErrors.projectCategory
+                  ? T(fieldErrors.projectCategory)
+                  : undefined
+              }
             >
               <select
                 className="input-field"
+                {...register("projectCategory")}
                 value={form.projectCategory}
                 onChange={set("projectCategory")}
               >
@@ -438,27 +478,35 @@ export default function ApplyPage() {
             <FormField
               name="projectLocation"
               label={`${T("projectLocation")} *`}
-              error={fieldErrors.projectLocation ? T(fieldErrors.projectLocation) : undefined}
+              error={
+                fieldErrors.projectLocation
+                  ? T(fieldErrors.projectLocation)
+                  : undefined
+              }
             >
               <input
                 className="input-field"
+                {...register("projectLocation")}
                 value={form.projectLocation}
                 onChange={set("projectLocation")}
                 placeholder="Nairobi, Kenya"
-                {...register("projectLocation")}
               />
             </FormField>
             <FormField
               name="projectDescription"
               label={T("projectDescription")}
-              error={fieldErrors.projectDescription ? T(fieldErrors.projectDescription) : undefined}
+              error={
+                fieldErrors.projectDescription
+                  ? T(fieldErrors.projectDescription)
+                  : undefined
+              }
             >
               <textarea
                 className="input-field min-h-[100px] resize-y"
+                {...register("projectDescription")}
                 value={form.projectDescription}
                 onChange={set("projectDescription")}
                 placeholder="Tell us about the project in a few sentences."
-                {...register("projectDescription")}
               />
             </FormField>
           </>
@@ -476,7 +524,9 @@ export default function ApplyPage() {
             <FormField
               name="co2PerXLM"
               label={`${T("co2PerXLM")} *`}
-              error={fieldErrors.co2PerXLM ? T(fieldErrors.co2PerXLM) : undefined}
+              error={
+                fieldErrors.co2PerXLM ? T(fieldErrors.co2PerXLM) : undefined
+              }
               helper="e.g. 0.05 kg CO₂ per XLM."
             >
               <input
@@ -492,7 +542,11 @@ export default function ApplyPage() {
             <FormField
               name="expectedAnnualTonnesCO2"
               label={T("annualTonnes")}
-              error={fieldErrors.expectedAnnualTonnesCO2 ? T(fieldErrors.expectedAnnualTonnesCO2) : undefined}
+              error={
+                fieldErrors.expectedAnnualTonnesCO2
+                  ? T(fieldErrors.expectedAnnualTonnesCO2)
+                  : undefined
+              }
             >
               <input
                 className="input-field"
@@ -511,223 +565,224 @@ export default function ApplyPage() {
             >
               <textarea
                 className="input-field min-h-[80px] resize-y"
+                {...register("notes")}
                 value={form.notes}
                 onChange={set("notes")}
                 placeholder="Methodology, prior funding rounds, anything else the reviewer should see."
-                {...register("notes")}
               />
             </FormField>
           </>
         )}
 
-          {/* Step: documents */}
-          {step === "documents" && (
-            <>
-              <h2 className="font-display text-xl font-bold text-[#0F172A] dark:text-[#E2E8F0]">
-                {T("documentsTitle")}
-              </h2>
-              <p className="text-[#475569] dark:text-[#94A3B8] text-sm font-body">
-                {T("documentsHint")}
-              </p>
-              <p className="text-xs text-[#64748B] dark:text-[#94A3B8] font-body">
-                {T("storageNote")}
-              </p>
+        {/* Step: documents */}
+        {step === "documents" && (
+          <>
+            <h2 className="font-display text-xl font-bold text-[#0F172A] dark:text-[#E2E8F0]">
+              {T("documentsTitle")}
+            </h2>
+            <p className="text-[#475569] dark:text-[#94A3B8] text-sm font-body">
+              {T("documentsHint")}
+            </p>
+            <p className="text-xs text-[#64748B] dark:text-[#94A3B8] font-body">
+              {T("storageNote")}
+            </p>
 
-              <div className="rounded-lg border border-dashed border-forest-200 p-4 flex flex-col gap-3 bg-forest-50/40">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={ACCEPTED_DOC_TYPES}
-                  onChange={handleFileSelected}
-                  className="block w-full text-sm text-[#0F172A] dark:text-[#E2E8F0] file:mr-3 file:rounded-md file:border-0 file:bg-gradient-to-r file:from-[#4F46E5] file:to-[#7C3AED] file:px-4 file:py-2 file:text-white file:cursor-pointer hover:file:opacity-90"
-                  aria-label={T("documentsTitle")}
-                />
-                {uploading && (
-                  <p className="text-xs text-[#4F46E5] dark:text-[#818CF8] font-body">
-                    {T("uploading")}
-                  </p>
-                )}
-                {uploadError && (
-                  <p className="text-xs text-red-500 font-body">{uploadError}</p>
-                )}
-              </div>
-
-              {documents.length === 0 ? (
-                <p className="text-sm text-[#64748B] dark:text-[#94A3B8] font-body">
-                  {T("noDocuments")}
+            <div className="rounded-lg border border-dashed border-forest-200 p-4 flex flex-col gap-3 bg-forest-50/40">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_DOC_TYPES}
+                onChange={handleFileSelected}
+                className="block w-full text-sm text-[#0F172A] dark:text-[#E2E8F0] file:mr-3 file:rounded-md file:border-0 file:bg-gradient-to-r file:from-[#4F46E5] file:to-[#7C3AED] file:px-4 file:py-2 file:text-white file:cursor-pointer hover:file:opacity-90"
+                aria-label={T("documentsTitle")}
+              />
+              {uploading && (
+                <p className="text-xs text-[#4F46E5] dark:text-[#818CF8] font-body">
+                  {T("uploading")}
                 </p>
-              ) : (
-                <ul className="divide-y divide-forest-100 rounded-lg border border-forest-100 overflow-hidden">
-                  {documents.map((doc, i) => (
-                    <li
-                      key={`${doc.url}-${i}`}
-                      className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-[#14142D]"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[#0F172A] dark:text-[#E2E8F0] truncate font-body">
-                          {doc.name}
-                        </p>
-                        <p className="text-xs text-[#64748B] dark:text-[#94A3B8] font-body truncate">
-                          {doc.backend} ·{" "}
-                          {doc.size ? `${(doc.size / 1024).toFixed(1)} KB` : "—"}
-                        </p>
-                      </div>
-                      <a
-                        href={doc.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-[#4F46E5] dark:text-[#818CF8] hover:underline font-body"
-                      >
-                        ↗
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => removeDocument(i)}
-                        className="text-xs text-red-500 hover:text-red-600 font-body"
-                      >
-                        {T("remove")}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
               )}
-            </>
-          )}
+              {uploadError && (
+                <p className="text-xs text-red-500 font-body">{uploadError}</p>
+              )}
+            </div>
 
-          {/* Step: review */}
-          {step === "review" && (() => {
+            {documents.length === 0 ? (
+              <p className="text-sm text-[#64748B] dark:text-[#94A3B8] font-body">
+                {T("noDocuments")}
+              </p>
+            ) : (
+              <ul className="divide-y divide-forest-100 rounded-lg border border-forest-100 overflow-hidden">
+                {documents.map((doc, i) => (
+                  <li
+                    key={`${doc.url}-${i}`}
+                    className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-[#14142D]"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[#0F172A] dark:text-[#E2E8F0] truncate font-body">
+                        {doc.name}
+                      </p>
+                      <p className="text-xs text-[#64748B] dark:text-[#94A3B8] font-body truncate">
+                        {doc.backend} ·{" "}
+                        {doc.size ? `${(doc.size / 1024).toFixed(1)} KB` : "—"}
+                      </p>
+                    </div>
+                    <a
+                      href={doc.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[#4F46E5] dark:text-[#818CF8] hover:underline font-body"
+                    >
+                      ↗
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => removeDocument(i)}
+                      className="text-xs text-red-500 hover:text-red-600 font-body"
+                    >
+                      {T("remove")}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+
+        {/* Step: review */}
+        {step === "review" &&
+          (() => {
             const reviewData = getValues();
             return (
-            <>
-              <h2 className="font-display text-xl font-bold text-[#0F172A] dark:text-[#E2E8F0]">
-                {T("stepReview")}
-              </h2>
-              <p className="text-sm text-[#475569] dark:text-[#94A3B8] font-body">
-                Quick scan before submission:
-              </p>
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm font-body">
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("orgName")}
-                  </dt>
-                  <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
-                    {reviewData.organizationName || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("contactEmail")}
-                  </dt>
-                  <dd className="text-forest-900 break-all">
-                    {reviewData.contactEmail || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("walletAddress")}
-                  </dt>
-                  <dd className="font-mono text-xs text-[#0F172A] dark:text-[#E2E8F0] break-all">
-                    {reviewData.walletAddress || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("projectName")}
-                  </dt>
-                  <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
-                    {reviewData.projectName || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("projectCategory")}
-                  </dt>
-                  <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
-                    {reviewData.projectCategory || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("projectLocation")}
-                  </dt>
-                  <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
-                    {reviewData.projectLocation || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("co2PerXLM")}
-                  </dt>
-                  <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
-                    {reviewData.co2PerXLM || "—"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("annualTonnes")}
-                  </dt>
-                  <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
-                    {reviewData.expectedAnnualTonnesCO2 || "—"}
-                  </dd>
-                </div>
-                <div className="sm:col-span-2">
-                  <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
-                    {T("documentsTitle")}
-                  </dt>
-                  <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
-                    {documents.length
-                      ? documents.map((d) => d.name).join(", ")
-                      : T("noDocuments")}
-                  </dd>
-                </div>
-              </dl>
+              <>
+                <h2 className="font-display text-xl font-bold text-[#0F172A] dark:text-[#E2E8F0]">
+                  {T("stepReview")}
+                </h2>
+                <p className="text-sm text-[#475569] dark:text-[#94A3B8] font-body">
+                  Quick scan before submission:
+                </p>
+                <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm font-body">
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("orgName")}
+                    </dt>
+                    <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
+                      {reviewData.organizationName || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("contactEmail")}
+                    </dt>
+                    <dd className="text-forest-900 break-all">
+                      {reviewData.contactEmail || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("walletAddress")}
+                    </dt>
+                    <dd className="font-mono text-xs text-[#0F172A] dark:text-[#E2E8F0] break-all">
+                      {reviewData.walletAddress || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("projectName")}
+                    </dt>
+                    <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
+                      {reviewData.projectName || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("projectCategory")}
+                    </dt>
+                    <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
+                      {reviewData.projectCategory || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("projectLocation")}
+                    </dt>
+                    <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
+                      {reviewData.projectLocation || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("co2PerXLM")}
+                    </dt>
+                    <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
+                      {reviewData.co2PerXLM || "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("annualTonnes")}
+                    </dt>
+                    <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
+                      {reviewData.expectedAnnualTonnesCO2 || "—"}
+                    </dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs text-[#64748B] dark:text-[#94A3B8] uppercase tracking-wider">
+                      {T("documentsTitle")}
+                    </dt>
+                    <dd className="text-[#0F172A] dark:text-[#E2E8F0]">
+                      {documents.length
+                        ? documents.map((d) => d.name).join(", ")
+                        : T("noDocuments")}
+                    </dd>
+                  </div>
+                </dl>
 
-              {serverError && (
-                <p className="text-sm text-red-500 font-body">{serverError}</p>
-              )}
-            </>
+                {serverError && (
+                  <p className="text-sm text-red-500 font-body">
+                    {serverError}
+                  </p>
+                )}
+              </>
             );
           })()}
-        </div>
+      </form>
+      {/* Navigation */}
+      <div className="flex justify-between mt-6">
+        <button
+          type="button"
+          onClick={prevStep}
+          disabled={stepIndex === 0}
+          className="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {T("common.back") || "Back"}
+        </button>
 
-        {/* Navigation */}
-        <div className="flex justify-between mt-6">
+        {step === "documents" ? (
           <button
             type="button"
-            onClick={prevStep}
-            disabled={stepIndex === 0}
-            className="btn-secondary disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={validateAndNext}
+            className="btn-primary"
           >
-            {T("common.back") || "Back"}
+            {T("common.next") || "Next"}
           </button>
-
-          {step === "documents" ? (
-            <button
-              type="button"
-              onClick={validateAndNext}
-              className="btn-primary"
-            >
-              {T("common.next") || "Next"}
-            </button>
-          ) : step === "review" ? (
-            <button
-              type="submit"
-              disabled={submitting}
-              className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {submitting ? T("submitting") : T("submit")}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={validateAndNext}
-              className="btn-primary"
-            >
-              {T("common.next") || "Next"}
-            </button>
-          )}
-        </div>
-      </form>
+        ) : step === "review" ? (
+          <button
+            type="submit"
+            disabled={submitting}
+            className="btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {submitting ? T("submitting") : T("submit")}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={validateAndNext}
+            className="btn-primary"
+          >
+            {T("common.next") || "Next"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
